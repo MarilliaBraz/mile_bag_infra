@@ -1,0 +1,6 @@
+data/
+valhalla/custom_files/*
+!valhalla/custom_files/.gitkeep
+mail/config/
+.env
+*.jks

@@ -1,0 +1,83 @@
+# Ambiente de desenvolvimento/homologação do Milebag: dependências externas da
+# API rodando em contêineres. Não inclui proxy reverso nem TLS público
+# (Caddy/Let's Encrypt) — isso é da implantação de produção, ainda não escrita.
+#
+#   docker compose up -d postgres mail          # o mínimo para a API e a conversa por e-mail
+#   docker compose up -d valhalla               # depois de preparar o mapa (scripts/preparar-mapa.sh)
+#   scripts/configurar-mail.sh                  # 1ª vez: contas e alias do e-mail
+#   scripts/gerar-truststore.sh                 # 1ª vez: confiança no certificado autoassinado do e-mail
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: milebag-pg
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: ${MILEBAG_PG_ADMIN_SENHA:-admin}
+      MILEBAG_APP_SENHA: ${MILEBAG_PG_APP_SENHA:-milebag_app}
+    ports:
+      - "5433:5432" # 5433 evita conflito com um PostgreSQL local na 5432
+    volumes:
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro
+      - milebag-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin -d milebag"]
+      interval: 5s
+      retries: 20
+
+  valhalla:
+    image: ghcr.io/gis-ops/docker-valhalla/valhalla:latest
+    container_name: milebag-valhalla
+    ports:
+      - "8002:8002"
+    volumes:
+      - ./valhalla/custom_files:/custom_files
+    environment:
+      # Constrói os tiles a partir dos .pbf em valhalla/custom_files na 1ª subida e reaproveita nas seguintes.
+      tile_urls: ""
+      use_tiles_ignore_pbf: "True"
+      build_elevation: "False"
+      build_admins: "True"
+      build_time_zones: "False"
+      server_threads: "2"
+      force_rebuild: "False"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8002/status || exit 1"]
+      interval: 15s
+      retries: 40
+      start_period: 60s
+
+  # Postfix (SMTP) + Dovecot (IMAP), HU18 T003. A caixa "mensagens@" recebe as
+  # respostas dos passageiros (Reply-To entrega-{id}@mensagens.milebag.local,
+  # alias catch-all); "noreply@" envia; ana@ e bruno@ são passageiros de teste.
+  mail:
+    image: ghcr.io/docker-mailserver/docker-mailserver:latest
+    container_name: milebag-mail
+    hostname: mail.milebag.local
+    ports:
+      - "2525:25"
+      - "5587:587"
+      - "9993:993"
+    volumes:
+      # Volumes nomeados, não pastas do host: Dovecot/Postfix falham (fstat/rename, "queue file write error") em bind mount de NTFS.
+      - milebag-mail-data:/var/mail
+      - milebag-mail-state:/var/mail-state
+      - milebag-mail-logs:/var/log/mail
+      - ./mail/config:/tmp/docker-mailserver
+    environment:
+      SSL_TYPE: self-signed
+      ENABLE_CLAMAV: "0"
+      ENABLE_SPAMASSASSIN: "0"
+      ENABLE_FAIL2BAN: "0"
+      ENABLE_POSTGREY: "0"
+      ENABLE_RSPAMD: "0"
+      ONE_DIR: "1"
+    cap_add:
+      - NET_ADMIN
+    restart: unless-stopped
+
+volumes:
+  milebag-pgdata:
+  milebag-mail-data:
+  milebag-mail-state:
+  milebag-mail-logs:
