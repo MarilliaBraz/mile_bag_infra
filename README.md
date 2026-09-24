@@ -31,7 +31,7 @@ scripts/gerar-certificado-mail.sh   # CA e certificado de DESENVOLVIMENTO do e-m
 docker compose up -d postgres mail
 scripts/configurar-mail.sh          # contas noreply@, mensagens@, ana@, bruno@ (@milebag.local) e o alias catch-all
 scripts/gerar-truststore.sh         # cacerts do JDK + a CA local, em data/truststore.jks
-scripts/preparar-mapa.sh            # baixa o Sudeste (~860 MB) e recorta São Paulo (~150 MB)
+scripts/preparar-mapa.sh            # Goiás + faixas de MG, MT e MS que fazem divisa (Centro-Oeste ~200 MB + Sudeste ~860 MB, recortados e fundidos em ~200 MB)
 docker compose up -d valhalla       # a 1ª subida constrói os tiles (minutos); /status responde quando pronto
 ```
 
@@ -50,6 +50,10 @@ MILEBAG_MENSAGERIA_IMAP_USUARIO=mensagens@milebag.local MILEBAG_MENSAGERIA_IMAP_
 MILEBAG_MENSAGERIA_IMAP_INTERVALO_MS=5000
 # JVM (truststore com a CA local): -Djavax.net.ssl.trustStore=<repo>/data/truststore.jks -Djavax.net.ssl.trustStorePassword=changeit
 ```
+
+### Mapa (Valhalla)
+
+O padrão é **Goiás e as regiões que fazem divisa com Minas Gerais (Triângulo Mineiro), Mato Grosso (leste) e Mato Grosso do Sul (nordeste)**: `BBOX=-54.0,-20.3,-45.5,-12.2` sobre os extratos Centro-Oeste e Sudeste da Geofabrik. Tocantins e Bahia ficam **sem mapa** (não baixamos Norte/Nordeste), então rota que cruze para lá não existe. Para outra região: `BBOX="..." REGIOES="..." scripts/preparar-mapa.sh`, depois `scripts/limpar-tiles.sh` (apaga os tiles antigos; remova antes o `.pbf` que não vale mais) e `docker compose up -d valhalla`. A 1ª construção de tiles leva dezenas de minutos e ~6 GB de RAM.
 
 ### O que NÃO está provisionado
 
