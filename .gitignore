@@ -4,3 +4,7 @@ valhalla/custom_files/*
 mail/config/
 .env
 *.jks
+
+# Ambientes de homologação/produção: segredos e código exportado pelo implantar.sh
+ambientes/*.env
+build/
