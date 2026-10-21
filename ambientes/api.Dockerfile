@@ -13,7 +13,7 @@ FROM eclipse-temurin:21-jre
 # Tesseract nativo + idioma português para o OCR do BDO (Tess4J). O caminho dos dados de treino muda com a versão
 # do pacote, então o link fixo /opt/tessdata é criado a partir de onde o por.traineddata foi instalado.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-por curl \
+ && apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-por \
  && ln -s "$(dirname "$(find /usr/share/tesseract-ocr -name por.traineddata | head -n 1)")" /opt/tessdata \
  && rm -rf /var/lib/apt/lists/* \
  && useradd --system --uid 10001 milebag \
@@ -22,6 +22,7 @@ ENV MILEBAG_TESSDATA_PATH=/opt/tessdata
 COPY --from=build /fonte/app.jar /app/app.jar
 USER milebag
 EXPOSE 8080
+# Só testa se a porta aceita conexão: uma requisição HTTP a cada 15s encheria o log da API de avisos.
 HEALTHCHECK --interval=15s --timeout=5s --start-period=90s --retries=10 \
-  CMD curl -s -o /dev/null http://localhost:8080/api/v1/auth/login || exit 1
+  CMD bash -c '</dev/tcp/localhost/8080' || exit 1
 ENTRYPOINT ["java", "-XX:MaxRAMPercentage=75", "-jar", "/app/app.jar"]
