@@ -1,0 +1,6 @@
+# Acrescentado por scripts/implantar.sh quando MILEBAG_PORTA_HTTPS está definida: o Caddy obtém e renova
+# sozinho o certificado do Let's Encrypt para MILEBAG_SITE (que precisa ser o domínio público, não ":80").
+services:
+  web:
+    ports:
+      - "${MILEBAG_PORTA_HTTPS}:443"

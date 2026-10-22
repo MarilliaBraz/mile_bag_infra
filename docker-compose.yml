@@ -1,6 +1,6 @@
-# Ambiente de desenvolvimento/homologação do Milebag: dependências externas da
-# API rodando em contêineres. Não inclui proxy reverso nem TLS público
-# (Caddy/Let's Encrypt) — isso é da implantação de produção, ainda não escrita.
+# Ambiente de DESENVOLVIMENTO do Milebag: dependências externas da API rodando
+# em contêineres. Homologação e produção (pilha completa, com Caddy e TLS) ficam
+# em ambientes/ e sobem por scripts/implantar.sh.
 #
 #   docker compose up -d postgres mail          # o mínimo para a API e a conversa por e-mail
 #   docker compose up -d valhalla               # depois de preparar o mapa (scripts/preparar-mapa.sh)

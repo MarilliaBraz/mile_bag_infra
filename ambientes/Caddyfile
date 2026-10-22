@@ -1,0 +1,28 @@
+# MILEBAG_SITE: ":80" atende só HTTP (máquina local / rede interna); um domínio público (ex.: app.empresa.com.br)
+# liga o HTTPS automático com certificado do Let's Encrypt.
+{$MILEBAG_SITE::80} {
+	encode zstd gzip
+
+	# API e documentação (a documentação só responde onde a API a liga - homologação).
+	@api path /api/* /docs* /api-docs* /v3/*
+	handle @api {
+		reverse_proxy api:8080
+	}
+
+	handle {
+		root * /srv
+		# index.html e o service worker nunca ficam em cache, senão a PWA não percebe a versão nova.
+		@semCache path / /index.html /sw.js /registerSW.js /manifest.webmanifest
+		header @semCache Cache-Control "no-cache"
+		@estaticos path /assets/*
+		header @estaticos Cache-Control "public, max-age=31536000, immutable"
+		header {
+			X-Content-Type-Options nosniff
+			Referrer-Policy strict-origin-when-cross-origin
+			X-Frame-Options DENY
+		}
+		# Rotas do React Router (/motorista, /admin/...) caem no index.html.
+		try_files {path} /index.html
+		file_server
+	}
+}

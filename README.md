@@ -16,7 +16,7 @@ Padronização de ambiente e implantação reprodutível, sem custo de infraestr
 
 ## Ambiente de desenvolvimento (`docker-compose.yml`)
 
-Sobe as dependências externas da API em contêineres. **Não** inclui proxy reverso nem TLS público — isso é da implantação de produção, ainda não escrita.
+Sobe as dependências externas da API em contêineres. **Não** inclui proxy reverso nem TLS público — isso fica nos ambientes de homologação e produção (seção abaixo).
 
 | Serviço | Para quê | Porta no host |
 |---|---|---|
@@ -65,6 +65,45 @@ O padrão é **Goiás e as regiões que fazem divisa com Minas Gerais (Triângul
   5. `scripts/telegram-webhook.sh status` mostra a URL registrada e o último erro do Telegram; `remover` desfaz.
   O script foi testado só contra o servidor **falso** (`scripts/fake-telegram.cjs`, agora com `getMe`/`setWebhook`/`getWebhookInfo`/`deleteWebhook`); nada disso foi exercitado contra o Telegram de verdade. Para desenvolvimento sem bot há `scripts/fake-telegram.cjs`, um servidor **falso** (não prova o comportamento do Telegram de verdade).
 - **Certificado real do e-mail, DNS (MX/SPF/DKIM) e caixa BDO de produção** — o e-mail daqui só fala com `@milebag.local`; não entrega para a internet.
+
+## Ambientes de homologação e produção (`ambientes/` + `scripts/implantar.sh`)
+
+Além do compose de desenvolvimento acima, há dois ambientes completos (banco, API e app web atrás do Caddy),
+cada um um projeto Compose separado, com banco e arquivos próprios:
+
+| Ambiente | Para quê | Versão aceita | Endereço padrão |
+|---|---|---|---|
+| **homologação** | validar uma mudança (branch/PR) antes do merge | qualquer branch, tag ou commit | http://localhost:8081 |
+| **produção** | o que o usuário final usa | só `main` ou tag `vX.Y.Z`, já publicada na `origin/main` | http://localhost:8090 (ou o domínio, com HTTPS) |
+
+```bash
+scripts/implantar.sh homologacao feature/minha-mudanca     # app nessa branch, API na branch atual do mile_bag_api
+scripts/implantar.sh homologacao feature/x feature/y       # versão do app e da API
+scripts/implantar.sh producao                              # main dos dois repositórios
+scripts/implantar.sh producao v0.2.0 v0.1.0                # tags
+scripts/implantar.sh homologacao situacao                  # versão no ar e estado dos contêineres
+scripts/implantar.sh homologacao parar                     # derruba (o banco fica no volume)
+```
+
+Fluxo de uma mudança: branch → PR → `implantar.sh homologacao <branch>` → validação → merge do PR na `main`
+→ `implantar.sh producao`. Até o merge, a mudança existe **só** em homologação; o script recusa levar para
+produção qualquer coisa que não seja a `main` (ou uma tag) já publicada no GitHub.
+
+Como funciona:
+
+- O código vem de `git archive` da versão pedida (só o que está commitado), exportado para `build/<ambiente>/`
+  junto com `ambientes/api.Dockerfile`, `ambientes/app.Dockerfile` e `ambientes/Caddyfile`.
+- O Caddy serve o app e encaminha `/api` para a API na mesma origem. Com `MILEBAG_SITE=<domínio>` e
+  `MILEBAG_PORTA_HTTPS=443` ele obtém o certificado do Let's Encrypt sozinho.
+- A configuração fica em `ambientes/<ambiente>.env` (fora do Git), criado a partir do `.env.example` na 1ª
+  implantação; senhas do banco e segredo do JWT vazios são gerados aleatoriamente nessa hora.
+- Homologação mostra uma faixa amarela "Ambiente de Homologação" com a versão implantada, liga a
+  documentação da API em `/docs` e cria as contas de teste (`admin`, `empresa`, `motorista`, senha `12345678`).
+  Por isso ela **nunca** deve ficar exposta à internet.
+- Produção não tem contas de teste: a 1ª conta da plataforma é criada com
+  `scripts/criar-admin-plataforma.sh producao <login>` (a senha é pedida no terminal e gravada só como hash).
+- Os dois usam o Valhalla do compose de desenvolvimento (`MILEBAG_VALHALLA_URL`, padrão
+  `http://host.docker.internal:8002`); e-mail e Telegram seguem desligados até serem provisionados.
 
 ## Repositórios relacionados
 

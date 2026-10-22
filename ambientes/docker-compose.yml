@@ -1,0 +1,82 @@
+# Ambientes de HOMOLOGAÇÃO e PRODUÇÃO do Milebag: a pilha completa (banco, API e app web atrás do Caddy)
+# construída a partir de uma versão exata (commit, branch ou tag) dos repositórios mile_bag_api e mile_bag_app.
+#
+# Não suba à mão: use scripts/implantar.sh, que exporta o código da versão pedida para build/<ambiente>/,
+# aplica a regra de qual versão pode ir para cada ambiente e chama este arquivo com o .env certo:
+#
+#   scripts/implantar.sh homologacao feature/minha-mudanca     # qualquer branch/commit, para validar
+#   scripts/implantar.sh producao                              # só main ou uma tag vX.Y.Z
+#
+# Cada ambiente é um projeto Compose separado (milebag-homologacao, milebag-producao): contêineres, rede e
+# volumes do banco não se misturam, e os dois podem rodar na mesma máquina ao mesmo tempo.
+
+name: milebag-${MILEBAG_AMBIENTE:?defina MILEBAG_AMBIENTE (use scripts/implantar.sh)}
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: ${MILEBAG_PG_ADMIN_SENHA:?defina MILEBAG_PG_ADMIN_SENHA}
+      MILEBAG_APP_SENHA: ${MILEBAG_PG_APP_SENHA:?defina MILEBAG_PG_APP_SENHA}
+    volumes:
+      - ../postgres/init:/docker-entrypoint-initdb.d:ro
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin -d milebag"]
+      interval: 5s
+      retries: 20
+    restart: unless-stopped
+
+  api:
+    build:
+      # implantar.sh exporta o código da versão pedida para cá e copia api.Dockerfile como Dockerfile.
+      context: ${MILEBAG_FONTES:?use scripts/implantar.sh}/api
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      SPRING_PROFILES_ACTIVE: ${MILEBAG_PERFIL_SPRING:-prod}
+      MILEBAG_DB_URL: jdbc:postgresql://postgres:5432/milebag
+      MILEBAG_DB_USER: milebag_app
+      MILEBAG_DB_PASSWORD: ${MILEBAG_PG_APP_SENHA}
+      MILEBAG_FLYWAY_USER: admin
+      MILEBAG_FLYWAY_PASSWORD: ${MILEBAG_PG_ADMIN_SENHA}
+      MILEBAG_JWT_SECRET: ${MILEBAG_JWT_SECRET:?defina MILEBAG_JWT_SECRET}
+      MILEBAG_CORS_ALLOWED_ORIGINS: ${MILEBAG_URL_PUBLICA}
+      MILEBAG_CONVITE_URL_BASE: ${MILEBAG_URL_PUBLICA}
+      MILEBAG_STORAGE_DIR: /dados/storage
+      MILEBAG_VALHALLA_URL: ${MILEBAG_VALHALLA_URL:-http://host.docker.internal:8002}
+      MILEBAG_NOMINATIM_USER_AGENT: ${MILEBAG_NOMINATIM_USER_AGENT:-milebag-api}
+      MILEBAG_DEV_SEED_USUARIOS: ${MILEBAG_CONTAS_DE_TESTE:-false}
+      SPRINGDOC_API_DOCS_ENABLED: ${MILEBAG_DOCUMENTACAO_API:-false}
+      SPRINGDOC_SWAGGER_UI_ENABLED: ${MILEBAG_DOCUMENTACAO_API:-false}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - storage:/dados/storage
+    restart: unless-stopped
+
+  web:
+    build:
+      # Idem, com app.Dockerfile e o Caddyfile.
+      context: ${MILEBAG_FONTES}/app
+      args:
+        VITE_API_BASE_URL: ${MILEBAG_URL_PUBLICA:?defina MILEBAG_URL_PUBLICA}
+        VITE_AMBIENTE: ${MILEBAG_AMBIENTE_ROTULO:-}
+        VITE_VERSAO: ${MILEBAG_VERSAO:-}
+    depends_on:
+      - api
+    environment:
+      MILEBAG_SITE: ${MILEBAG_SITE:-:80}
+    ports:
+      - "${MILEBAG_PORTA_HTTP:?defina MILEBAG_PORTA_HTTP}:80"
+    # Com domínio público, a porta 443 (TLS automático do Let's Encrypt) entra por docker-compose.tls.yml.
+    volumes:
+      - caddy-dados:/data
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  storage:
+  caddy-dados:
