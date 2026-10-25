@@ -51,6 +51,12 @@ services:
       MILEBAG_DEV_SEED_USUARIOS: ${MILEBAG_CONTAS_DE_TESTE:-false}
       SPRINGDOC_API_DOCS_ENABLED: ${MILEBAG_DOCUMENTACAO_API:-false}
       SPRINGDOC_SWAGGER_UI_ENABLED: ${MILEBAG_DOCUMENTACAO_API:-false}
+      # Bot do Telegram da conversa com o passageiro (HU18): desligado até o .env trazer o token do @BotFather.
+      MILEBAG_TELEGRAM_HABILITADO: ${MILEBAG_TELEGRAM_HABILITADO:-false}
+      MILEBAG_TELEGRAM_BOT_TOKEN: ${MILEBAG_TELEGRAM_BOT_TOKEN:-}
+      MILEBAG_TELEGRAM_BOT_USERNAME: ${MILEBAG_TELEGRAM_BOT_USERNAME:-}
+      MILEBAG_TELEGRAM_WEBHOOK_SECRET: ${MILEBAG_TELEGRAM_WEBHOOK_SECRET:-}
+      MILEBAG_TELEGRAM_API_URL: ${MILEBAG_TELEGRAM_API_URL:-https://api.telegram.org}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:

@@ -2,13 +2,14 @@
 // (entrega, limites, formatacao). Serve para exercitar o caminho HTTP de envio da API e o script
 // scripts/telegram-webhook.sh sem um bot real.
 //
-//   node scripts/fake-telegram.cjs            # porta 8081
+//   node scripts/fake-telegram.cjs            # porta 8081 (outra: FAKE_TELEGRAM_PORTA=8091)
 //   MILEBAG_TELEGRAM_API_URL=http://localhost:8081 MILEBAG_TELEGRAM_HABILITADO=true \
 //   MILEBAG_TELEGRAM_BOT_TOKEN=123:fake MILEBAG_TELEGRAM_BOT_USERNAME=milebag_fake_bot \
 //   MILEBAG_TELEGRAM_WEBHOOK_SECRET=segredo-dev  (na API)
 //
 // GET /_enviadas devolve o que a API mandou por sendMessage; GET /_webhook devolve o ultimo setWebhook recebido.
 const http = require("http");
+const PORTA = Number(process.env.FAKE_TELEGRAM_PORTA ?? 8081);
 const enviadas = [];
 let webhook = { url: "", secret_token: null };
 
@@ -50,4 +51,4 @@ http
       }
     });
   })
-  .listen(8081, () => console.log("fake Telegram em http://localhost:8081"));
+  .listen(PORTA, () => console.log(`fake Telegram em http://localhost:${PORTA}`));
