@@ -103,9 +103,11 @@ Como funciona:
 - Produção não tem contas de teste: a 1ª conta da plataforma é criada com
   `scripts/criar-admin-plataforma.sh producao <login>` (a senha é pedida no terminal e gravada só como hash).
 - Os dois usam o Valhalla do compose de desenvolvimento (`MILEBAG_VALHALLA_URL`, padrão
-  `http://host.docker.internal:8002`); e-mail e Telegram seguem desligados até serem provisionados. O Telegram liga
-  pelas variáveis `MILEBAG_TELEGRAM_*` do `.env` do ambiente (modelo nos `.env.example`); o e-mail ainda não tem
-  variáveis repassadas pelo compose dos ambientes.
+  `http://host.docker.internal:8002`); e-mail e Telegram seguem desligados até serem provisionados. Os dois ligam
+  pelas variáveis do `.env` do ambiente (`MILEBAG_TELEGRAM_*`, `MILEBAG_SMTP_*`, `MILEBAG_IMAP_*`,
+  `MILEBAG_MENSAGERIA_*`; modelos nos `.env.example`). Em homologação, `MILEBAG_MAIL_DESENVOLVIMENTO=true` liga a API
+  ao servidor de e-mail de desenvolvimento (`ambientes/docker-compose.mail-dev.yml`: nome `mail.milebag.local` e
+  truststore com a CA local), que só entrega para `@milebag.local`.
 
 ## Repositórios relacionados
 
