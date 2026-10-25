@@ -63,6 +63,10 @@ O padrão é **Goiás e as regiões que fazem divisa com Minas Gerais (Triângul
   3. `export MILEBAG_TELEGRAM_BOT_TOKEN=<token>` e `scripts/telegram-webhook.sh configurar https://<url-publica>` — valida o token, registra o webhook em `/api/v1/webhooks/telegram` com um segredo (gerado e mostrado uma vez, ou o de `MILEBAG_TELEGRAM_WEBHOOK_SECRET`) e imprime as variáveis da API.
   4. Suba a API com `MILEBAG_TELEGRAM_HABILITADO=true`, `..._BOT_TOKEN`, `..._BOT_USERNAME` e `..._WEBHOOK_SECRET` (o **mesmo** segredo: a API responde 401 ao webhook sem ele).
   5. `scripts/telegram-webhook.sh status` mostra a URL registrada e o último erro do Telegram; `remover` desfaz.
+  Para homologação (que **nunca** pode ficar exposta), não abra o túnel para o ambiente inteiro: rode
+  `node scripts/filtro-webhook-telegram.cjs` (porta 8092, repassa só `POST /api/v1/webhooks/telegram` para a 8081 e
+  responde 404 ao resto) e aponte o túnel para ele: `cloudflared tunnel --url http://localhost:8092`. O endereço
+  `trycloudflare.com` muda a cada subida do túnel, então o `configurar` precisa ser refeito.
   O script foi testado só contra o servidor **falso** (`scripts/fake-telegram.cjs`, agora com `getMe`/`setWebhook`/`getWebhookInfo`/`deleteWebhook`); nada disso foi exercitado contra o Telegram de verdade. Para desenvolvimento sem bot há `scripts/fake-telegram.cjs`, um servidor **falso** (não prova o comportamento do Telegram de verdade).
 - **Certificado real do e-mail, DNS (MX/SPF/DKIM) e caixa BDO de produção** — o e-mail daqui só fala com `@milebag.local`; não entrega para a internet.
 
