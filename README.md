@@ -113,6 +113,26 @@ Como funciona:
   ao servidor de e-mail de desenvolvimento (`ambientes/docker-compose.mail-dev.yml`: nome `mail.milebag.local` e
   truststore com a CA local), que só entrega para `@milebag.local`.
 
+### Backup e restauração (`scripts/backup.sh` + `scripts/restaurar.sh`)
+
+```bash
+scripts/backup.sh producao                                          # banco + arquivos enviados pelo app
+scripts/restaurar.sh producao data/backups/producao/2026-10-27_020000   # volta um backup (pede confirmação)
+```
+
+- O backup grava em `data/backups/<ambiente>/<data-hora>/` (fora do Git): `banco.dump` (`pg_dump`, com donos e
+  permissões, inclusive as do `milebag_app` e o isolamento por empresa), `storage.tar.gz` (fotos de BDO,
+  comprovantes, logotipos) e `SHA256SUMS`. A pasta só ganha o nome final depois de conferida; uma pasta
+  `.parcial` é um backup que falhou no meio.
+- Backups com mais de 14 dias são apagados (`MILEBAG_BACKUP_DIAS` muda isso). `MILEBAG_BACKUP_DIR` muda a pasta:
+  aponte para uma pasta sincronizada com a nuvem para ter uma cópia **fora desta máquina** - um backup no mesmo
+  disco não protege contra perda do disco.
+- A restauração confere o `SHA256SUMS`, pede para digitar o nome do ambiente, faz antes um backup do estado atual,
+  para a API durante a troca e restaura o banco numa transação só (ou volta tudo, ou nada muda).
+- Agendamento diário no Windows (Agendador de Tarefas), às 2h:
+  `schtasks /Create /TN "Milebag backup producao" /SC DAILY /ST 02:00 /TR "\"C:\Program Files\Git\bin\bash.exe\" -lc 'cd /d/Projeto_PI/mile_bag_infra && scripts/backup.sh producao >> data/backups/backup.log 2>&1'"`.
+  A máquina precisa estar ligada no horário; o resultado de cada execução fica em `data/backups/backup.log`.
+
 ## Repositórios relacionados
 
 - [`mile_bag_documentacao`](https://github.com/MarilliaBraz/mile_bag_documentacao) — documentação do projeto (TAP, escopo, sessões)
