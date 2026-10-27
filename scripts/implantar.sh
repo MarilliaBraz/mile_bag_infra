@@ -56,6 +56,11 @@ compose() {
   if grep -qE '^MILEBAG_PORTA_HTTPS=[0-9]+' "$ENV_ARQ"; then
     arquivos+=(-f "$RAIZ/ambientes/docker-compose.tls.yml")
   fi
+  if grep -qE '^MILEBAG_MAIL_DESENVOLVIMENTO=true' "$ENV_ARQ"; then
+    [ "$AMBIENTE" = producao ] && { echo "MILEBAG_MAIL_DESENVOLVIMENTO não vale em produção." >&2; exit 1; }
+    [ -f "$RAIZ/data/truststore.jks" ] || { echo "Falta data/truststore.jks: rode scripts/gerar-truststore.sh." >&2; exit 1; }
+    arquivos+=(-f "$RAIZ/ambientes/docker-compose.mail-dev.yml")
+  fi
   MILEBAG_FONTES="$FONTES" docker compose --env-file "$ENV_ARQ" "${arquivos[@]}" "$@"
 }
 

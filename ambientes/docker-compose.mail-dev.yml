@@ -1,0 +1,15 @@
+# Liga a API de HOMOLOGAÇÃO ao servidor de e-mail de DESENVOLVIMENTO (serviço "mail" do docker-compose.yml da raiz).
+# scripts/implantar.sh inclui este arquivo quando o .env tem MILEBAG_MAIL_DESENVOLVIMENTO=true. Nunca em produção:
+# lá o e-mail usa servidor e certificado reais, sem CA local.
+#
+# - mail.milebag.local aponta para a máquina, onde o servidor publica 5587 (SMTP) e 9993 (IMAPS); é o nome que o
+#   certificado de desenvolvimento aceita (scripts/gerar-certificado-mail.sh).
+# - A JVM confia na CA local pelo truststore de scripts/gerar-truststore.sh.
+services:
+  api:
+    extra_hosts:
+      - "mail.milebag.local:host-gateway"
+    volumes:
+      - ../data/truststore.jks:/dados/truststore.jks:ro
+    environment:
+      JAVA_TOOL_OPTIONS: -Djavax.net.ssl.trustStore=/dados/truststore.jks -Djavax.net.ssl.trustStorePassword=changeit
