@@ -100,7 +100,9 @@ Como funciona:
 - O Caddy serve o app e encaminha `/api` para a API na mesma origem. Com `MILEBAG_SITE=<domínio>` e
   `MILEBAG_PORTA_HTTPS=443` ele obtém o certificado do Let's Encrypt sozinho.
 - A configuração fica em `ambientes/<ambiente>.env` (fora do Git), criado a partir do `.env.example` na 1ª
-  implantação; senhas do banco e segredo do JWT vazios são gerados aleatoriamente nessa hora.
+  implantação; senhas do banco e segredo do JWT vazios são gerados aleatoriamente nessa hora, assim como o par
+  VAPID do Web Push (`MILEBAG_PUSH_CHAVE_*`, aviso de BDO novo da HU32, com `openssl`). Trocar o par VAPID
+  invalida as inscrições de notificação já feitas nos aparelhos.
 - Homologação mostra uma faixa amarela "Ambiente de Homologação" com a versão implantada, liga a
   documentação da API em `/docs` e cria as contas de teste (`admin`, `empresa`, `motorista`, senha `12345678`).
   Por isso ela **nunca** deve ficar exposta à internet.

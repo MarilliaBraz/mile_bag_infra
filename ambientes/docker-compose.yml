@@ -57,6 +57,10 @@ services:
       MILEBAG_TELEGRAM_BOT_USERNAME: ${MILEBAG_TELEGRAM_BOT_USERNAME:-}
       MILEBAG_TELEGRAM_WEBHOOK_SECRET: ${MILEBAG_TELEGRAM_WEBHOOK_SECRET:-}
       MILEBAG_TELEGRAM_API_URL: ${MILEBAG_TELEGRAM_API_URL:-https://api.telegram.org}
+      # Web Push do aviso de BDO novo (HU32): par VAPID gerado pelo implantar.sh; vazio = push desligado.
+      MILEBAG_PUSH_CHAVE_PUBLICA: ${MILEBAG_PUSH_CHAVE_PUBLICA:-}
+      MILEBAG_PUSH_CHAVE_PRIVADA: ${MILEBAG_PUSH_CHAVE_PRIVADA:-}
+      MILEBAG_PUSH_ASSUNTO: ${MILEBAG_PUSH_ASSUNTO:-mailto:noreply@milebag.local}
       # E-mail (HU02 BDO por IMAP, HU15 convites e HU18 conversa): desligado até o .env apontar um servidor.
       MILEBAG_SMTP_HABILITADO: ${MILEBAG_SMTP_HABILITADO:-false}
       MILEBAG_SMTP_HOST: ${MILEBAG_SMTP_HOST:-}
