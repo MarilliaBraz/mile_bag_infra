@@ -51,6 +51,23 @@ preencher_segredo MILEBAG_PG_ADMIN_SENHA
 preencher_segredo MILEBAG_PG_APP_SENHA
 preencher_segredo MILEBAG_JWT_SECRET
 
+# Par VAPID do Web Push (HU32, aviso de BDO novo): curva P-256, as duas chaves em base64url (sem "="), no formato
+# que a API e o navegador esperam - a privada são os 32 bytes do escalar, a pública o ponto não comprimido
+# (65 bytes). Gerado uma única vez: trocar o par invalida as inscrições dos aparelhos já feitas.
+gerar_chaves_push() {
+  grep -qE '^MILEBAG_PUSH_CHAVE_PRIVADA=.+' "$ENV_ARQ" && return
+  command -v openssl >/dev/null || { echo "Sem openssl: o Web Push fica desligado (MILEBAG_PUSH_* vazias)." >&2; return; }
+  local pem base64url publica privada
+  pem="$(openssl ecparam -name prime256v1 -genkey -noout)"
+  base64url() { base64 -w0 | tr '+/' '-_' | tr -d '='; }
+  privada="$(printf '%s\n' "$pem" | openssl ec -outform DER 2>/dev/null | tail -c +8 | head -c 32 | base64url)"
+  publica="$(printf '%s\n' "$pem" | openssl ec -pubout -outform DER 2>/dev/null | tail -c 65 | base64url)"
+  sed -i '/^MILEBAG_PUSH_CHAVE_\(PUBLICA\|PRIVADA\)=/d' "$ENV_ARQ"
+  printf '\n# Web Push (HU32) - gerado por implantar.sh; nao troque sem necessidade.\nMILEBAG_PUSH_CHAVE_PUBLICA=%s\nMILEBAG_PUSH_CHAVE_PRIVADA=%s\n' "$publica" "$privada" >>"$ENV_ARQ"
+  echo "Gerado o par VAPID (MILEBAG_PUSH_CHAVE_*) em ambientes/$AMBIENTE.env"
+}
+gerar_chaves_push
+
 compose() {
   local arquivos=(-f "$RAIZ/ambientes/docker-compose.yml")
   if grep -qE '^MILEBAG_PORTA_HTTPS=[0-9]+' "$ENV_ARQ"; then
