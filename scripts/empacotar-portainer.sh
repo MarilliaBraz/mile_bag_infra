@@ -24,13 +24,17 @@ PACOTE="$FONTES/pacote"
 # shellcheck source=comum.sh
 . "$RAIZ/scripts/comum.sh"
 
+# Globais (não "local"): o trap de saída roda depois que testar() já retornou e ainda precisa delas.
+PORTA_TESTE=8095
+PROJETO_TESTE=milebag-portainer-teste
+teste() { MILEBAG_PORTA_HTTP=$PORTA_TESTE docker compose -p "$PROJETO_TESTE" --env-file "$PACOTE/milebag.env" -f "$PACOTE/milebag-stack.yml" "$@"; }
+
 testar() {
   [ -f "$PACOTE/milebag.env" ] || { echo "Gere o pacote antes: scripts/empacotar-portainer.sh" >&2; exit 1; }
-  local porta=8095 projeto=milebag-portainer-teste arquivo
+  local porta=$PORTA_TESTE projeto=$PROJETO_TESTE arquivo
   # O Portainer recebe os .tar.gz pela API do Docker, a mesma que o "docker load" usa.
   for arquivo in "$PACOTE"/milebag-*.tar.gz; do docker load -q -i "$arquivo"; done
-  teste() { MILEBAG_PORTA_HTTP=$porta docker compose -p "$projeto" --env-file "$PACOTE/milebag.env" -f "$PACOTE/milebag-stack.yml" "$@"; }
-  trap 'teste down -v >/dev/null 2>&1' EXIT
+  trap 'teste down -v >/dev/null 2>&1 || echo "Não consegui remover o teste: docker compose -p $PROJETO_TESTE down -v" >&2' EXIT
   teste up -d
   echo "Aguardando a API (até 3 minutos)..."
   local codigo=000 tentativa
