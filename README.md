@@ -135,6 +135,31 @@ scripts/restaurar.sh producao data/backups/producao/2026-10-27_020000   # volta 
   `schtasks /Create /TN "Milebag backup producao" /SC DAILY /ST 02:00 /TR "\"C:\Program Files\Git\bin\bash.exe\" -lc 'cd /d/Projeto_PI/mile_bag_infra && scripts/backup.sh producao >> data/backups/backup.log 2>&1'"`.
   A máquina precisa estar ligada no horário; o resultado de cada execução fica em `data/backups/backup.log`.
 
+## Produção num servidor com Portainer (`scripts/empacotar-portainer.sh`)
+
+Para um servidor de terceiros administrado pelo Portainer, o código-fonte **não** vai para lá: o script compila
+aqui e gera um pacote só com as imagens prontas (o `.jar` da API e o app já compilado), a stack e as variáveis.
+
+```bash
+scripts/empacotar-portainer.sh          # main dos dois repositórios (mesma regra de produção: main ou tag vX.Y.Z)
+scripts/empacotar-portainer.sh testar   # sobe o pacote aqui na porta 8095, confere página, API e Valhalla e derruba
+```
+
+- O pacote sai em `build/portainer/pacote/` (fora do Git): `milebag-api-<versao>.tar.gz` e `milebag-web-<versao>.tar.gz`
+  a cada versão; `milebag-postgres-16.tar.gz` (com o script que cria a conta `milebag_app`) e
+  `milebag-valhalla-<mapa>.tar.gz` (com os tiles prontos) só quando mudam; `milebag-stack.yml` e `milebag.env`.
+- `milebag.env` tem as senhas: vem de `ambientes/portainer.env` (fora do Git, criado do `.env.example` com senhas,
+  JWT e VAPID gerados na 1ª vez). Não mande por e-mail ou mensagem: carregue você mesma no Portainer.
+- O app é compilado com `MILEBAG_URL_PUBLICA` (padrão `https://www.milebag.com.br`). O HTTPS fica com o proxy do
+  servidor (ex.: Nginx Proxy Manager), que encaminha o domínio para `MILEBAG_PORTA_HTTP` (padrão 8090).
+- 1ª implantação no Portainer: **Images > Import** de cada `.tar.gz`; **Stacks > Add stack > Upload** com o
+  `milebag-stack.yml`; **Load variables from .env file** com o `milebag.env`; **Deploy the stack**. No proxy, aponte
+  o domínio para `<ip-do-servidor>:<MILEBAG_PORTA_HTTP>`.
+- Versões seguintes: importe só os `.tar.gz` novos (o script lista quais), troque `MILEBAG_TAG` nas variáveis da stack
+  e use **Update the stack**. Os volumes do banco e dos arquivos continuam; as migrações rodam na subida da API.
+- As imagens são `linux/amd64` (as desta máquina). Confira a arquitetura do servidor no Portainer (Environment >
+  Host): em ARM, gere com `docker buildx --platform linux/arm64`.
+
 ## Repositórios relacionados
 
 - [`mile_bag_documentacao`](https://github.com/MarilliaBraz/mile_bag_documentacao) — documentação do projeto (TAP, escopo, sessões)
