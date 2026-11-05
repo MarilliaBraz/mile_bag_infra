@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Autoria humana: bloqueia rodape de coautoria ou atribuicao de IA (mile_bag_audite/CONSTITUTION.md §4 e CONVENTIONS.md §3).
+if grep -v '^#' "$1" | grep -Eiq '^(Co-Authored-By:.*(claude|anthropic|copilot|chatgpt|openai|gemini)|Claude-Session:|.*Generated with .*Claude)'; then
+  echo "✖ Rodapé de coautoria ou atribuição de IA não é permitido (CONVENTIONS.md §3)."
+  exit 1
+fi
