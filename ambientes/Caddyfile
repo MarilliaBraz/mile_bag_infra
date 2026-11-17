@@ -3,8 +3,9 @@
 {$MILEBAG_SITE::80} {
 	encode zstd gzip
 
-	# API e documentação (a documentação só responde onde a API a liga - homologação).
-	@api path /api/* /docs* /api-docs* /v3/*
+	# API e documentação (a documentação só responde onde a API a liga - homologação). /docs redireciona para
+	# /swagger-ui/index.html, que também é da API: sem ele aqui, a tela do Swagger caía no app (página institucional).
+	@api path /api/* /docs* /api-docs* /swagger-ui* /v3/*
 	handle @api {
 		reverse_proxy api:8080
 	}
