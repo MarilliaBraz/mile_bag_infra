@@ -85,11 +85,10 @@ cp "$RAIZ/ambientes/Caddyfile" "$FONTES/app/Caddyfile"
 cp "$RAIZ/ambientes/api.Dockerfile" "$FONTES/api/Dockerfile"
 
 TAG="$(curto mile_bag_app "$VERSAO_APP")-$(curto mile_bag_api "$VERSAO_API")"
-URL="$(grep -E '^MILEBAG_URL_PUBLICA=' "$ENV_ARQ" | cut -d= -f2-)"
-
 docker build -t "milebag/api:$TAG" "$FONTES/api"
+# VITE_API_BASE_URL vazio: o app chama a API na mesma origem (o Caddy da imagem encaminha /api).
 docker build -t "milebag/web:$TAG" \
-  --build-arg VITE_API_BASE_URL="$URL" \
+  --build-arg VITE_API_BASE_URL="" \
   --build-arg VITE_VERSAO="app $VERSAO_APP@$(curto mile_bag_app "$VERSAO_APP") · api $VERSAO_API@$(curto mile_bag_api "$VERSAO_API")" \
   "$FONTES/app"
 docker build -t milebag/postgres:16 -f "$RAIZ/ambientes/portainer/postgres.Dockerfile" "$RAIZ/postgres"
