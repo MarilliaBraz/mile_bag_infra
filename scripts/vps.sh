@@ -6,6 +6,7 @@
 #   scripts/vps.sh subir [tag]           # envia as imagens que faltam e sobe (ou atualiza) o Milebag
 #   scripts/vps.sh criar-admin <login>   # 1ª vez: conta do administrador da plataforma (pede a senha)
 #   scripts/vps.sh dns                   # confere se o domínio já aponta para a VPS
+#   scripts/vps.sh zona <servidor-dns>   # antes de trocar o DNS de provedor: confere a zona nova contra a atual
 #   scripts/vps.sh telegram              # registra o webhook do bot (depois que o HTTPS estiver no ar)
 #   scripts/vps.sh situacao              # contêineres, memória e disco
 #   scripts/vps.sh logs [serviço]        # acompanha os logs (api, web, postgres, valhalla)
@@ -218,7 +219,7 @@ conferir_dns() {
   if [ "$pendente" -eq 0 ]; then
     conferir_https
   else
-    echo "No Registro.br, troque o registro A desses nomes para $ip (veja o guia). O HTTPS sai sozinho depois."
+    echo "O DNS ainda não aponta para $ip (a mudança leva até 1 hora; veja o guia). O HTTPS sai sozinho depois."
   fi
   return "$pendente"
 }
@@ -263,15 +264,54 @@ telegram() {
 
 backup() {
   remoto "$DESTINO/backup.sh"
-  mkdir -p "$RAIZ/data/backups/vps"
-  rsync -a -e "ssh ${SSH_OPCOES[*]}" "$VPS:$DESTINO/backups/" "$RAIZ/data/backups/vps/"
+  mkdir -p "$RAIZ/data/backups/vps" && chmod 700 "$RAIZ/data/backups/vps"
+  rsync -a --chmod=Du=rwx,Dgo=,Fu=rw,Fgo= -e "ssh ${SSH_OPCOES[*]}" "$VPS:$DESTINO/backups/" "$RAIZ/data/backups/vps/"
   echo "Cópia local em data/backups/vps/"
+}
+
+# Respostas de um servidor DNS normalizadas para comparar provedores: TXT longos (DKIM) vêm partidos em pedaços de
+# tamanhos diferentes em cada provedor, e a prioridade do MX não importa para o Google (só há um servidor).
+consultar() {
+  dig +short +norecurse "@$1" "$2" "$3" | sed -e 's/" "//g' -e 's/^[0-9]* \(.*\)/\1/' -e 's/\.$//' | sort
+}
+
+# Compara a zona já montada no provedor novo com a que está no ar, ANTES de trocar os servidores DNS no Registro.br.
+# O site deve apontar para a VPS; e-mail (MX, SPF, verificação e DKIM do Google) deve ser idêntico ao atual.
+conferir_zona() {
+  local novo="${1:-}" atual="${MILEBAG_DNS_ATUAL:-d.sec.dns.br}" dominio site ip nome tipo esperado obtido falhas=0
+  [ -n "$novo" ] || falhar "Uso: scripts/vps.sh zona <servidor DNS do provedor novo, ex.: dns1.kinghost.com.br>"
+  dominio="$(valor MILEBAG_DOMINIO_SEM_WWW)"
+  site="$(valor MILEBAG_SITE)"
+  ip="$(remoto 'curl -4 -fsS --max-time 10 https://api.ipify.org' 2>/dev/null || echo "${VPS#*@}")"
+  [ -n "$(consultar "$novo" "$dominio" SOA)" ] || falhar "$novo não responde pela zona $dominio. A zona já foi criada no painel?"
+  for nome in "$dominio" "$site"; do
+    obtido="$(consultar "$novo" "$nome" A | paste -sd' ')"
+    if [ "$obtido" = "$ip" ]; then echo "  ok      A    $nome -> $ip"; else
+      echo "  ERRADO  A    $nome -> ${obtido:-nada} (precisa ser $ip)"; falhas=1; fi
+  done
+  for par in "$dominio MX" "$dominio TXT" "google._domainkey.$dominio TXT" "_dmarc.$dominio TXT"; do
+    read -r nome tipo <<<"$par"
+    esperado="$(consultar "$atual" "$nome" "$tipo")"
+    obtido="$(consultar "$novo" "$nome" "$tipo")"
+    [ -z "$esperado" ] && [ -z "$obtido" ] && continue
+    if [ "$esperado" = "$obtido" ]; then printf "  ok      %-4s %s\n" "$tipo" "$nome"; else
+      printf "  ERRADO  %-4s %s\n" "$tipo" "$nome"
+      diff <(echo "$esperado") <(echo "$obtido") | sed -n 's/^< /          falta: /p; s/^> /          sobra: /p' | cut -c1-110
+      falhas=1
+    fi
+  done
+  if [ "$falhas" -eq 0 ]; then
+    echo "Zona completa em $novo. Pode trocar os servidores DNS no Registro.br."
+  else
+    echo "NÃO troque os servidores DNS ainda: corrija no painel o que está ERRADO e rode de novo."
+  fi
+  return "$falhas"
 }
 
 comando="${1:-}"
 [ $# -gt 0 ] && shift
 case "$comando" in
-  preparar | subir | criar-admin | dns | telegram | situacao | logs | backup | entrar)
+  preparar | subir | criar-admin | dns | zona | telegram | situacao | logs | backup | entrar)
     criar_env
     preencher_segredo MILEBAG_PG_ADMIN_SENHA
     preencher_segredo MILEBAG_PG_APP_SENHA
@@ -280,7 +320,7 @@ case "$comando" in
     exigir_vps
     ;;
   *)
-    sed -n '4,13p' "$0" >&2
+    sed -n '4,14p' "$0" >&2
     exit 2
     ;;
 esac
@@ -289,6 +329,7 @@ case "$comando" in
   subir) subir "${1:-}" ;;
   criar-admin) criar_admin "${1:-}" ;;
   dns) conferir_dns ;;
+  zona) conferir_zona "${1:-}" ;;
   telegram) telegram ;;
   situacao) remoto "cd $DESTINO && $COMPOSE ps && echo && free -h && df -h /" ;;
   logs) ssh -t "${SSH_OPCOES[@]}" "$VPS" "cd $DESTINO && $COMPOSE logs -f --tail 200 ${1:-}" ;;

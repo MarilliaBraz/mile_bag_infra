@@ -5,6 +5,8 @@
 # Uma pasta terminada em ".parcial" é um backup que falhou no meio e não vale.
 # Para ter uma cópia fora do servidor: scripts/vps.sh backup (no seu computador) baixa todos.
 set -euo pipefail
+# O backup tem o banco inteiro (dados pessoais): só o root lê.
+umask 077
 
 BASE=/opt/milebag/backups
 DIAS="${MILEBAG_BACKUP_DIAS:-14}"

@@ -171,6 +171,7 @@ scripts/vps.sh preparar              # 1ª vez: chave SSH, Docker, ufw (22/80/44
 scripts/vps.sh subir 9be1a96-599f3ff # envia as imagens que faltam, sobe a stack em /opt/milebag e espera ficar saudável
 scripts/vps.sh criar-admin <login>   # 1ª conta da plataforma (o hash BCrypt é calculado aqui)
 scripts/vps.sh dns                   # o domínio já aponta para a VPS? o HTTPS saiu?
+scripts/vps.sh zona <servidor-dns>   # antes de mudar o DNS de provedor: a zona nova tem site + e-mail?
 scripts/vps.sh telegram | situacao | logs [serviço] | backup | entrar
 ```
 

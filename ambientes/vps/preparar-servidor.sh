@@ -48,6 +48,7 @@ ufw allow 443/udp >/dev/null
 ufw --force enable >/dev/null
 
 mkdir -p /opt/milebag/backups
+chmod 700 /opt/milebag/backups
 chmod 700 /opt/milebag
 echo '30 3 * * * root /opt/milebag/backup.sh >>/var/log/milebag-backup.log 2>&1' >/etc/cron.d/milebag-backup
 
