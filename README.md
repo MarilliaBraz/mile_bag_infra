@@ -177,8 +177,13 @@ scripts/vps.sh telegram | situacao | logs [serviço] | backup | entrar
 
 - Configuração em `ambientes/vps.env` (fora do Git), criada na 1ª vez de `ambientes/portainer.env`; preencha
   `MILEBAG_VPS=root@<ip>`. O servidor recebe a stack do Portainer mais `ambientes/vps/milebag-vps.yml`.
-- Atualizar: merge do PR → `scripts/empacotar-portainer.sh` → `scripts/vps.sh subir <tag nova>`. Voltar: `subir` com a
-  tag anterior (as imagens antigas ficam no servidor).
+- **Homologação na mesma VPS** (`scripts/vps.sh homolog subir|criar-admin|dns|situacao|logs|entrar`): fica em
+  `homolog.<domínio>`, em `/opt/milebag-homolog`, com banco e segredos próprios (`ambientes/vps-homolog.env`, criado na
+  1ª vez) e sem Telegram nem e-mail. Não publica porta: o Caddy da produção encaminha o domínio dela pela rede
+  `milebag-borda` (`ambientes/vps/milebag-vps-homolog.yml`). Precisa de um registro A `homolog` → IP da VPS.
+- Atualizar: merge do PR → `scripts/empacotar-portainer.sh` → `scripts/vps.sh homolog subir <tag nova>` → conferir em
+  `homolog.<domínio>` → `scripts/vps.sh subir <tag nova>`. A produção recusa uma tag que não esteja na homologação.
+  Voltar: `subir` com a tag anterior (as imagens antigas ficam no servidor).
 - Backup diário às 03:30 dentro da VPS (`/opt/milebag/backups`, 14 dias); `scripts/vps.sh backup` traz uma cópia para
   `data/backups/vps/`.
 

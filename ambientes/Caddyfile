@@ -10,6 +10,14 @@
 		reverse_proxy api:8080
 	}
 
+	# Nome do ambiente para a faixa do topo do app (vazio em produção): a mesma imagem roda na homologação e na
+	# produção, e o app lê o nome daqui ao abrir.
+	handle /ambiente.json {
+		header Content-Type "application/json; charset=utf-8"
+		header Cache-Control "no-store"
+		respond `\{"rotulo":"{$MILEBAG_AMBIENTE_ROTULO}"\}` 200
+	}
+
 	handle {
 		root * /srv
 		# index.html e o service worker nunca ficam em cache, senão a PWA não percebe a versão nova.

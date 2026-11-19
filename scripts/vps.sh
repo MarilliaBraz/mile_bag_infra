@@ -12,22 +12,47 @@
 #   scripts/vps.sh logs [serviço]        # acompanha os logs (api, web, postgres, valhalla)
 #   scripts/vps.sh backup                # faz um backup agora e baixa todos para data/backups/vps/
 #   scripts/vps.sh entrar                # abre um terminal no servidor
+#   scripts/vps.sh homolog <comando>     # o mesmo na HOMOLOGAÇÃO (subir, criar-admin, dns, situacao, logs, entrar)
 #
 # A configuração fica em ambientes/vps.env (fora do Git), criada na 1ª vez a partir de ambientes/portainer.env (mesmas
 # senhas, token do Telegram e chaves de push). Preencha nela MILEBAG_VPS=root@<IP da VPS>.
 #
+# A homologação roda na mesma VPS, em homolog.<domínio>, com banco e segredos próprios (ambientes/vps-homolog.env,
+# criado na 1ª vez) e sem Telegram nem e-mail, que são da produção. Toda versão passa por ela antes: a produção só
+# aceita a tag que está na homologação.
+#
 # "tag" é a versão das imagens, no formato <commit do app>-<commit da api> (ex.: 9be1a96-599f3ff). Sem ela, vale a
-# última usada (gravada no vps.env) ou, na 1ª vez, a da main. As imagens são geradas por scripts/empacotar-portainer.sh,
-# que só aceita a main publicada: atualizar é "merge do PR -> empacotar-portainer.sh -> vps.sh subir <tag nova>".
+# última usada (gravada no .env do ambiente) ou, na 1ª vez, a da main. As imagens são geradas por
+# scripts/empacotar-portainer.sh, que só aceita a main publicada: atualizar é "merge do PR -> empacotar-portainer.sh
+# -> vps.sh homolog subir <tag nova> -> conferir em homolog.<domínio> -> vps.sh subir <tag nova>".
 set -euo pipefail
 
 RAIZ="$(cd "$(dirname "$0")/.." && pwd)"
 REPOS="${MILEBAG_REPOS:-$RAIZ/..}"
-# shellcheck disable=SC2034 # AMBIENTE é usado nas mensagens de comum.sh
-AMBIENTE=vps
-ENV_ARQ="${MILEBAG_VPS_ENV:-$RAIZ/ambientes/vps.env}"
-DESTINO=/opt/milebag
-COMPOSE="docker compose -p milebag --env-file .env -f milebag-stack.yml -f milebag-vps.yml"
+ENV_PRODUCAO="${MILEBAG_VPS_ENV:-$RAIZ/ambientes/vps.env}"
+ENV_HOMOLOG="${MILEBAG_VPS_HOMOLOG_ENV:-$RAIZ/ambientes/vps-homolog.env}"
+# Rede do Docker que liga o Caddy da produção (dono das portas 80/443) ao web da homologação.
+REDE_BORDA=milebag-borda
+COMPOSE_PRODUCAO="docker compose -p milebag --env-file .env -f milebag-stack.yml -f milebag-vps.yml"
+DESTINO_PRODUCAO=/opt/milebag
+if [ "${1:-}" = homolog ]; then
+  shift
+  HOMOLOG=1
+  # shellcheck disable=SC2034 # AMBIENTE é usado nas mensagens de comum.sh
+  AMBIENTE=vps-homolog
+  ENV_ARQ="$ENV_HOMOLOG"
+  DESTINO=/opt/milebag-homolog
+  EXTRA=milebag-vps-homolog.yml
+  COMPOSE="docker compose -p milebag-homolog --env-file .env -f milebag-stack.yml -f $EXTRA"
+else
+  HOMOLOG=0
+  # shellcheck disable=SC2034
+  AMBIENTE=vps
+  ENV_ARQ="$ENV_PRODUCAO"
+  DESTINO="$DESTINO_PRODUCAO"
+  EXTRA=milebag-vps.yml
+  COMPOSE="$COMPOSE_PRODUCAO"
+fi
 CHAVE="$HOME/.ssh/id_ed25519"
 # accept-new: na 1ª conexão grava a identidade do servidor sem perguntar; depois disso, uma identidade diferente
 # (servidor trocado ou ataque) faz o SSH recusar a conexão.
@@ -37,8 +62,16 @@ SSH_OPCOES=(-i "$CHAVE" -o StrictHostKeyChecking=accept-new -o ControlMaster=aut
 # shellcheck source=comum.sh
 . "$RAIZ/scripts/comum.sh"
 
-# Valor de uma variável do vps.env (vazio se não existir).
-valor() { { grep -E "^$1=" "$ENV_ARQ" || true; } | tail -n1 | cut -d= -f2-; }
+falhar() { echo "$*" >&2; exit 1; }
+
+# Valor de uma variável num .env (vazio se o arquivo ou a variável não existir).
+valor_em() { # arquivo variavel
+  [ -f "$1" ] || return 0
+  { grep -E "^$2=" "$1" || true; } | tail -n1 | cut -d= -f2-
+}
+
+# Valor de uma variável do .env do ambiente em uso.
+valor() { valor_em "$ENV_ARQ" "$1"; }
 
 gravar() { # variavel valor
   if grep -qE "^$1=" "$ENV_ARQ"; then
@@ -50,6 +83,10 @@ gravar() { # variavel valor
 
 criar_env() {
   [ -f "$ENV_ARQ" ] && return
+  if [ "$HOMOLOG" = 1 ]; then
+    criar_env_homolog
+    return
+  fi
   local base="$RAIZ/ambientes/portainer.env"
   [ -f "$base" ] || base="$RAIZ/ambientes/portainer.env.example"
   (umask 077 && grep -vE '^MILEBAG_PORTA_HTTP=' "$base" >"$ENV_ARQ")
@@ -65,6 +102,47 @@ MILEBAG_DOMINIO_SEM_WWW=milebag.com.br
 MILEBAG_PORTA_HTTP=80
 EOF
   echo "Criado ambientes/vps.env a partir de $(basename "$base")."
+}
+
+# A homologação usa o servidor da produção, mas banco, segredos e chaves de push próprios (gerados em seguida).
+# Telegram e e-mail ficam desligados: o bot só tem um webhook, e a caixa de mensagens lida pela produção não pode
+# ser consumida por outra API.
+criar_env_homolog() {
+  local dominio
+  [ -f "$ENV_PRODUCAO" ] || falhar "Configure antes a produção (ambientes/vps.env): a homologação roda no mesmo servidor."
+  dominio="$(valor_em "$ENV_PRODUCAO" MILEBAG_DOMINIO_SEM_WWW)"
+  [ -n "$dominio" ] || falhar "Preencha MILEBAG_DOMINIO_SEM_WWW em ambientes/vps.env (a homologação fica em homolog.<domínio>)."
+  (umask 077 && cat >"$ENV_ARQ" <<EOF
+# Homologação na VPS (scripts/vps.sh homolog ...): mesmo servidor da produção, banco e segredos próprios.
+MILEBAG_VPS=$(valor_em "$ENV_PRODUCAO" MILEBAG_VPS)
+MILEBAG_VPS_PORTA=$(valor_em "$ENV_PRODUCAO" MILEBAG_VPS_PORTA)
+MILEBAG_SITE=homolog.$dominio
+MILEBAG_URL_PUBLICA=https://homolog.$dominio
+# Faixa no topo do app avisando que não é produção.
+MILEBAG_AMBIENTE_ROTULO=Homologação
+# Exigida pela stack, mas sem efeito: a homologação não publica porta (o Caddy da produção encaminha para ela).
+MILEBAG_PORTA_HTTP=80
+MILEBAG_PG_ADMIN_SENHA=
+MILEBAG_PG_APP_SENHA=
+MILEBAG_JWT_SECRET=
+MILEBAG_NOMINATIM_USER_AGENT=$(valor_em "$ENV_PRODUCAO" MILEBAG_NOMINATIM_USER_AGENT)
+MILEBAG_PUSH_ASSUNTO=$(valor_em "$ENV_PRODUCAO" MILEBAG_PUSH_ASSUNTO)
+MILEBAG_TELEGRAM_HABILITADO=false
+MILEBAG_SMTP_HABILITADO=false
+MILEBAG_IMAP_HABILITADO=false
+MILEBAG_MENSAGERIA_IMAP_HABILITADO=false
+EOF
+  )
+  echo "Criado ambientes/vps-homolog.env (homolog.$dominio)."
+}
+
+# Regra do projeto: nada vai para a produção sem ter passado pela homologação.
+exigir_homologada() {
+  [ "$HOMOLOG" = 0 ] || return 0
+  local tag_homolog
+  tag_homolog="$(valor_em "$ENV_HOMOLOG" MILEBAG_TAG)"
+  [ "$TAG" = "$tag_homolog" ] ||
+    falhar "A versão $TAG não está na homologação (lá está: ${tag_homolog:-nenhuma}). Rode antes: scripts/vps.sh homolog subir $TAG"
 }
 
 exigir_vps() {
@@ -143,14 +221,21 @@ gerar_arquivos() { # pasta
   # .env do servidor: o vps.env sem as variáveis que só servem a este script, mais as versões das imagens.
   grep -vE '^\s*(#|$)|^MILEBAG_(VPS|VPS_PORTA|DOMINIO_SEM_WWW|TAG|TAG_VALHALLA)=' "$ENV_ARQ" >"$1/.env"
   printf 'MILEBAG_TAG=%s\nMILEBAG_TAG_VALHALLA=%s\n' "$TAG" "$TAG_VALHALLA" >>"$1/.env"
+  cp "$RAIZ/ambientes/portainer/milebag-stack.yml" "$RAIZ/ambientes/vps/$EXTRA" "$1/"
+  # A homologação usa o Caddyfile da própria imagem (só HTTP); o da produção é o que tem os domínios públicos.
+  [ "$HOMOLOG" = 0 ] || return 0
   cp "$RAIZ/ambientes/Caddyfile" "$1/Caddyfile"
-  local sem_www
+  local sem_www site_homolog
   sem_www="$(valor MILEBAG_DOMINIO_SEM_WWW)"
   if [ -n "$sem_www" ]; then
     printf '\n# Gerado por scripts/vps.sh: o domínio sem www vai para o principal.\n%s {\n\tredir https://%s{uri} permanent\n}\n' \
       "$sem_www" "$(valor MILEBAG_SITE)" >>"$1/Caddyfile"
   fi
-  cp "$RAIZ/ambientes/portainer/milebag-stack.yml" "$RAIZ/ambientes/vps/milebag-vps.yml" "$1/"
+  site_homolog="$(valor_em "$ENV_HOMOLOG" MILEBAG_SITE)"
+  if [ -n "$site_homolog" ]; then
+    printf '\n# Gerado por scripts/vps.sh: a homologação, na mesma VPS (rede %s), fora dos buscadores.\n%s {\n\theader X-Robots-Tag "noindex, nofollow"\n\treverse_proxy milebag-homolog-web:80\n}\n' \
+      "$REDE_BORDA" "$site_homolog" >>"$1/Caddyfile"
+  fi
 }
 
 esperar_saude() {
@@ -174,7 +259,8 @@ esperar_saude() {
 subir() { # [tag]
   exigir_conexao
   resolver_tags "${1:-}"
-  echo "Versão $TAG (mapa $TAG_VALHALLA) para $VPS"
+  exigir_homologada
+  echo "Versão $TAG (mapa $TAG_VALHALLA) para $VPS ($AMBIENTE)"
   local imagem
   for imagem in milebag/postgres:16 "milebag/valhalla:$TAG_VALHALLA" "milebag/api:$TAG" "milebag/web:$TAG"; do
     enviar_imagem "$imagem"
@@ -184,16 +270,19 @@ subir() { # [tag]
   pasta="$(mktemp -d)"
   gerar_arquivos "$pasta"
   caddy_antes="$(remoto "sha256sum $DESTINO/Caddyfile 2>/dev/null" || true)"
-  tar -C "$pasta" -cf - .env Caddyfile milebag-stack.yml milebag-vps.yml |
-    remoto "mkdir -p $DESTINO && tar -C $DESTINO --no-same-owner -xf - && \
-      chmod 600 $DESTINO/.env && chmod 644 $DESTINO/Caddyfile $DESTINO/milebag-stack.yml $DESTINO/milebag-vps.yml"
+  (cd "$pasta" && tar -cf - .env ./*) |
+    remoto "mkdir -p $DESTINO && tar -C $DESTINO --no-same-owner -xf - && chmod 600 $DESTINO/.env && \
+      chmod 644 $DESTINO/milebag-stack.yml $DESTINO/$EXTRA && { [ ! -f $DESTINO/Caddyfile ] || chmod 644 $DESTINO/Caddyfile; }"
   rm -r "$pasta"
 
+  remoto "docker network inspect $REDE_BORDA >/dev/null 2>&1 || docker network create $REDE_BORDA >/dev/null"
   remoto "cd $DESTINO && $COMPOSE up -d --remove-orphans"
   # O Docker não percebe mudança num arquivo montado: se só o Caddyfile mudou, o web precisa reiniciar para lê-lo.
-  caddy_depois="$(remoto "sha256sum $DESTINO/Caddyfile")"
-  if [ -n "$caddy_antes" ] && [ "$caddy_antes" != "$caddy_depois" ]; then
-    remoto "cd $DESTINO && $COMPOSE restart web"
+  if [ "$HOMOLOG" = 0 ]; then
+    caddy_depois="$(remoto "sha256sum $DESTINO/Caddyfile")"
+    if [ -n "$caddy_antes" ] && [ "$caddy_antes" != "$caddy_depois" ]; then
+      remoto "cd $DESTINO && $COMPOSE restart web"
+    fi
   fi
   gravar MILEBAG_TAG "$TAG"
   gravar MILEBAG_TAG_VALHALLA "$TAG_VALHALLA"
@@ -234,7 +323,8 @@ conferir_https() {
     return
   fi
   echo "Domínio apontado, mas o HTTPS ainda não respondeu. Reiniciando o web para pedir o certificado agora ..."
-  remoto "cd $DESTINO && $COMPOSE restart web" >/dev/null
+  # O certificado (também o da homologação) é tirado pelo Caddy da produção.
+  remoto "cd $DESTINO_PRODUCAO && $COMPOSE_PRODUCAO restart web" >/dev/null
   echo "Espere 1 minuto e rode de novo: scripts/vps.sh dns"
 }
 
@@ -310,6 +400,12 @@ conferir_zona() {
 
 comando="${1:-}"
 [ $# -gt 0 ] && shift
+if [ "$HOMOLOG" = 1 ]; then
+  case "$comando" in
+    preparar | zona | telegram | backup)
+      falhar "'$comando' só existe para a produção (o servidor, o DNS, o bot e o backup diário são os dela)." ;;
+  esac
+fi
 case "$comando" in
   preparar | subir | criar-admin | dns | zona | telegram | situacao | logs | backup | entrar)
     criar_env
@@ -320,7 +416,7 @@ case "$comando" in
     exigir_vps
     ;;
   *)
-    sed -n '4,14p' "$0" >&2
+    sed -n '4,15p' "$0" >&2
     exit 2
     ;;
 esac
