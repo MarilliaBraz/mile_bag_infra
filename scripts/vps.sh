@@ -105,7 +105,7 @@ preparar() {
   # A chave já entrou (conferido acima): fecha a entrada por senha, alvo comum de robôs. O console web do painel
   # da KingHost continua aceitando a senha de root, se um dia precisar.
   remoto "printf 'PasswordAuthentication no\nKbdInteractiveAuthentication no\nPermitRootLogin prohibit-password\n' \
-    >/etc/ssh/sshd_config.d/00-milebag.conf && sshd -t && systemctl reload ssh"
+    >/etc/ssh/sshd_config.d/00-milebag.conf && mkdir -p /run/sshd && sshd -t && systemctl reload ssh"
   echo "VPS preparada. Próximo passo: scripts/vps.sh subir"
 }
 
