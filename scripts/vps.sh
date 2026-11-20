@@ -333,10 +333,13 @@ conferir_https() {
 criar_admin() { # login
   local login="${1:?Uso: scripts/vps.sh criar-admin <login>}" senha confirmacao hash
   [[ "$login" =~ ^[a-z0-9._-]{3,40}$ ]] || { echo "Login: só letras minúsculas, números, ponto, - e _." >&2; exit 1; }
-  read -rsp "Senha para '$login' (mínimo 8 caracteres): " senha
+  # A senha é digitada às escondidas; sem terminal (ex.: o "!" do Claude Code), o read falhava e o script saía calado.
+  [ -t 0 ] || falhar "criar-admin pede a senha no terminal: rode o comando num terminal comum (fora do Claude Code)."
+  read -rsp "Senha para '$login' (mínimo 8 caracteres): " senha ||
+    falhar "Leitura da senha interrompida; nada foi criado."
   echo
   [ "${#senha}" -ge 8 ] || { echo "A senha precisa ter pelo menos 8 caracteres." >&2; exit 1; }
-  read -rsp "Repita a senha: " confirmacao
+  read -rsp "Repita a senha: " confirmacao || falhar "Leitura da senha interrompida; nada foi criado."
   echo
   [ "$senha" = "$confirmacao" ] || { echo "As senhas não conferem." >&2; exit 1; }
   # Hash BCrypt calculado aqui (mesmo formato do PasswordEncoder da API): a senha não sai deste computador.

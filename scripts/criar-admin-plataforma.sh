@@ -15,10 +15,13 @@ LOGIN="${2:?Informe o login da conta}"
 ENV_ARQ="$RAIZ/ambientes/$AMBIENTE.env"
 [ -f "$ENV_ARQ" ] || { echo "Ambiente '$AMBIENTE' ainda não implantado (falta ambientes/$AMBIENTE.env)." >&2; exit 1; }
 
-read -rsp "Senha para '$LOGIN' (mínimo 8 caracteres): " SENHA
+# A senha é digitada às escondidas; sem terminal (ex.: o "!" do Claude Code), o read falhava e o script saía calado.
+[ -t 0 ] || { echo "Este script pede a senha no terminal: rode-o num terminal comum (fora do Claude Code)." >&2; exit 1; }
+read -rsp "Senha para '$LOGIN' (mínimo 8 caracteres): " SENHA ||
+  { echo "Leitura da senha interrompida; nada foi criado." >&2; exit 1; }
 echo
 [ "${#SENHA}" -ge 8 ] || { echo "A senha precisa ter pelo menos 8 caracteres." >&2; exit 1; }
-read -rsp "Repita a senha: " CONFIRMACAO
+read -rsp "Repita a senha: " CONFIRMACAO || { echo "Leitura da senha interrompida; nada foi criado." >&2; exit 1; }
 echo
 [ "$SENHA" = "$CONFIRMACAO" ] || { echo "As senhas não conferem." >&2; exit 1; }
 
