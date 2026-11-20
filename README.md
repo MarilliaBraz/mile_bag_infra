@@ -160,6 +160,33 @@ scripts/empacotar-portainer.sh testar   # sobe o pacote aqui na porta 8095, conf
 - As imagens são `linux/amd64` (as desta máquina). Confira a arquitetura do servidor no Portainer (Environment >
   Host): em ARM, gere com `docker buildx --platform linux/arm64`.
 
+## Produção numa VPS própria (`scripts/vps.sh`)
+
+Para uma VPS com Ubuntu 24.04 e root (KVM), sem Portainer: as mesmas imagens do pacote acima vão por SSH
+(`docker save | ssh docker load`, só as que mudaram) e o Caddy da imagem web atende direto as portas 80/443, com
+certificado do Let's Encrypt e redirecionamento do domínio sem www para o com www.
+
+```bash
+scripts/vps.sh preparar              # 1ª vez: chave SSH, Docker, ufw (22/80/443), swap, backup diário; SSH só por chave
+scripts/vps.sh subir 9be1a96-599f3ff # envia as imagens que faltam, sobe a stack em /opt/milebag e espera ficar saudável
+scripts/vps.sh criar-admin <login>   # 1ª conta da plataforma (o hash BCrypt é calculado aqui)
+scripts/vps.sh dns                   # o domínio já aponta para a VPS? o HTTPS saiu?
+scripts/vps.sh zona <servidor-dns>   # antes de mudar o DNS de provedor: a zona nova tem site + e-mail?
+scripts/vps.sh telegram | situacao | logs [serviço] | backup | entrar
+```
+
+- Configuração em `ambientes/vps.env` (fora do Git), criada na 1ª vez de `ambientes/portainer.env`; preencha
+  `MILEBAG_VPS=root@<ip>`. O servidor recebe a stack do Portainer mais `ambientes/vps/milebag-vps.yml`.
+- **Homologação na mesma VPS** (`scripts/vps.sh homolog subir|criar-admin|dns|situacao|logs|entrar`): fica em
+  `homolog.<domínio>`, em `/opt/milebag-homolog`, com banco e segredos próprios (`ambientes/vps-homolog.env`, criado na
+  1ª vez) e sem Telegram nem e-mail. Não publica porta: o Caddy da produção encaminha o domínio dela pela rede
+  `milebag-borda` (`ambientes/vps/milebag-vps-homolog.yml`). Precisa de um registro A `homolog` → IP da VPS.
+- Atualizar: merge do PR → `scripts/empacotar-portainer.sh` → `scripts/vps.sh homolog subir <tag nova>` → conferir em
+  `homolog.<domínio>` → `scripts/vps.sh subir <tag nova>`. A produção recusa uma tag que não esteja na homologação.
+  Voltar: `subir` com a tag anterior (as imagens antigas ficam no servidor).
+- Backup diário às 03:30 dentro da VPS (`/opt/milebag/backups`, 14 dias); `scripts/vps.sh backup` traz uma cópia para
+  `data/backups/vps/`.
+
 ## Repositórios relacionados
 
 - [`mile_bag_documentacao`](https://github.com/MarilliaBraz/mile_bag_documentacao) — documentação do projeto (TAP, escopo, sessões)

@@ -1,0 +1,24 @@
+# Acréscimo à stack do Portainer (ambientes/portainer/milebag-stack.yml) para rodar numa VPS própria, sem proxy na
+# frente: o Caddy da imagem web atende direto as portas 80 e 443 e tira sozinho o certificado do Let's Encrypt para
+# MILEBAG_SITE. Usado por scripts/vps.sh, que copia os dois arquivos para /opt/milebag no servidor.
+#
+# O Caddyfile vem montado de fora (gerado por scripts/vps.sh a partir de ambientes/Caddyfile) só para acrescentar o
+# redirecionamento do domínio sem www para o com www e o encaminhamento do domínio da homologação, que roda na
+# mesma VPS (milebag-vps-homolog.yml) e é alcançada pela rede milebag-borda.
+services:
+  web:
+    environment:
+      MILEBAG_SITE: ${MILEBAG_SITE:?defina MILEBAG_SITE}
+    ports:
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+    networks:
+      - default
+      - borda
+
+networks:
+  borda:
+    name: milebag-borda
+    external: true

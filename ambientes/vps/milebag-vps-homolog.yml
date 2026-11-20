@@ -1,0 +1,23 @@
+# Acréscimo à stack do Portainer (ambientes/portainer/milebag-stack.yml) para a HOMOLOGAÇÃO na mesma VPS da
+# produção (scripts/vps.sh homolog ...). Projeto e pasta próprios (milebag-homolog, /opt/milebag-homolog): banco,
+# arquivos e segredos separados dos da produção.
+#
+# As portas 80/443 são da produção. A homologação não publica porta nenhuma: o web daqui entra na rede milebag-borda
+# com o nome milebag-homolog-web, e o Caddy da produção encaminha para ele o domínio da homologação (com o
+# certificado do Let's Encrypt). O Caddy daqui atende só HTTP (MILEBAG_SITE ":80" da stack).
+services:
+  web:
+    environment:
+      # Faixa no topo do app (o Caddy entrega em /ambiente.json).
+      MILEBAG_AMBIENTE_ROTULO: ${MILEBAG_AMBIENTE_ROTULO:-Homologação}
+    ports: !reset []
+    networks:
+      default:
+      borda:
+        aliases:
+          - milebag-homolog-web
+
+networks:
+  borda:
+    name: milebag-borda
+    external: true
