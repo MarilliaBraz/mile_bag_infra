@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Testes de ponta a ponta na HOMOLOGAÇÃO: dispensa da entrega (V46) e cancelamento do BDO pela empresa (V47).
+"""Testes de ponta a ponta na HOMOLOGAÇÃO: dispensa da entrega (V46), cancelamento do BDO pela empresa (V47) e
+retirada da bagagem e passo a passo da entrega com fotos (V48).
 
 Uso (antes de levar uma versão da homologação para a produção):
     python3 scripts/testes-homolog.py
@@ -45,7 +46,7 @@ VPS = HOMOLOG.get("MILEBAG_VPS") or ler_env(os.path.join(RAIZ, "ambientes", "vps
 resultados = []
 
 
-def req(metodo, caminho, token=None, corpo=None, multipart=None):
+def req(metodo, caminho, token=None, corpo=None, multipart=None, formulario=None):
     cabecalhos = {}
     dados = None
     if token:
@@ -58,6 +59,17 @@ def req(metodo, caminho, token=None, corpo=None, multipart=None):
         nome, conteudo = multipart
         dados = (f"--{fronteira}\r\nContent-Disposition: form-data; name=\"imagem\"; filename=\"{nome}\"\r\n"
                  f"Content-Type: image/png\r\n\r\n").encode() + conteudo + f"\r\n--{fronteira}--\r\n".encode()
+        cabecalhos["Content-Type"] = "multipart/form-data; boundary=" + fronteira
+    if formulario is not None:
+        fronteira = uuid.uuid4().hex
+        partes = b""
+        for nome, valor in formulario:
+            if isinstance(valor, bytes):
+                partes += (f"--{fronteira}\r\nContent-Disposition: form-data; name=\"{nome}\"; filename=\"{nome}.png\"\r\n"
+                           "Content-Type: image/png\r\n\r\n").encode() + valor + b"\r\n"
+            else:
+                partes += (f"--{fronteira}\r\nContent-Disposition: form-data; name=\"{nome}\"\r\n\r\n{valor}\r\n").encode()
+        dados = partes + f"--{fronteira}--\r\n".encode()
         cabecalhos["Content-Type"] = "multipart/form-data; boundary=" + fronteira
     r = urllib.request.Request(URL + caminho, data=dados, method=metodo, headers=cabecalhos)
     try:
@@ -117,7 +129,17 @@ def assumir(token, bdo_id):
     return s, e
 
 
+def retirar(token, entrega_id, avarias=0):
+    campos = [("foto", png()), ("latitude", "-16.632"), ("longitude", "-49.221"), ("idLocal", str(uuid.uuid4()))]
+    campos += [("avarias", png()) for _ in range(avarias)]
+    if avarias:
+        campos.append(("observacaoAvaria", "arranhao na lateral"))
+    return req("POST", f"/api/v1/entregas/{entrega_id}/retirada", token, formulario=campos)
+
+
 def sair_em_rota(token, entrega_id):
+    s, c = retirar(token, entrega_id)
+    assert s == 201, ("retirada", s, c)
     s, c = req("POST", f"/api/v1/entregas/{entrega_id}/rotas/selecionar", token, corpo={
         "tipoSelecao": "PROPRIA", "alternativaId": None, "justificativa": "teste automatizado",
         "tracadoManual": [{"latitude": -16.632, "longitude": -49.221}, {"latitude": -16.686, "longitude": -49.264}]})
@@ -243,6 +265,54 @@ def main():
     s, c = req("GET", "/api/v1/gestao/entregas?status=CANCELADA", adm)
     checar("filtro 'Cancelada' traz as 3 entregas canceladas", s == 200 and {cbdo, d, e} <= {l["bdoId"] for l in c},
            (s, len(c) if isinstance(c, list) else c))
+
+    print("\n--- Itens 4 e 5: retirada e passo a passo da entrega ---")
+    mot_recebedor = motivos(m1, "RECEBEDOR")
+    checar("empresa tem a lista de quem pode assinar (5 opções)", len(mot_recebedor) == 5, len(mot_recebedor))
+    f, _ = novo_bdo(m1, "F")
+    ef = assumir(m1, f)[1]["id"]
+    det = req("GET", f"/api/v1/entregas/{ef}/detalhe", m1)[1]
+    checar("entrega assumida ainda sem retirada", det.get("retiradaRegistrada") is False, det.get("retiradaRegistrada"))
+    req("POST", f"/api/v1/entregas/{ef}/rotas/selecionar", m1, corpo={
+        "tipoSelecao": "PROPRIA", "alternativaId": None, "justificativa": "teste automatizado",
+        "tracadoManual": [{"latitude": -16.632, "longitude": -49.221}, {"latitude": -16.686, "longitude": -49.264}]})
+    s, c = req("POST", f"/api/v1/entregas/{ef}/viagem/iniciar", m1, corpo={})
+    checar("iniciar viagem sem retirada é recusado (400)", s == 400, (s, c))
+    s, c = req("POST", f"/api/v1/entregas/{ef}/retirada", m1, formulario=[("latitude", "-16.6")])
+    checar("retirada sem foto é recusada (400)", s == 400, (s, c))
+    s, c = retirar(m2, ef)
+    checar("outro motorista não registra a retirada (409)", s == 409, (s, c))
+    s, c = retirar(m1, ef, avarias=2)
+    checar("retirada com foto e 2 avarias é aceita", s == 201 and c.get("comLocalizacao") is True, (s, c))
+    s, c = retirar(m1, ef)
+    checar("segunda retirada na mesma tentativa é recusada (409)", s == 409, (s, c))
+    checar("detalhe passa a mostrar a retirada feita", req("GET", f"/api/v1/entregas/{ef}/detalhe", m1)[1].get("retiradaRegistrada") is True)
+    s, c = req("POST", f"/api/v1/entregas/{ef}/viagem/iniciar", m1, corpo={})
+    checar("com a retirada, a viagem inicia", s in (200, 201), (s, c))
+    base = [("foto", png()), ("dataHora", __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat().replace("+00:00", "Z")),
+            ("latitude", "-16.686"), ("longitude", "-49.264"), ("idLocal", str(uuid.uuid4()))]
+    s, c = req("POST", f"/api/v1/entregas/{ef}/comprovante", m1, formulario=base + [("tipoRecebedorId", mot_recebedor[0]["id"]), ("nomeRecebedor", "Ana")])
+    checar("entrega sem a foto na porta é recusada", s in (400, 422) and "porta" in str(msg(c)).lower(), (s, c))
+    s, c = req("POST", f"/api/v1/entregas/{ef}/comprovante", m1, formulario=base + [("fotoPorta", png())])
+    checar("entrega sem quem assinou é recusada", s in (400, 422), (s, c))
+    s, c = req("POST", f"/api/v1/entregas/{ef}/comprovante", m1, formulario=base + [
+        ("fotoPorta", png()), ("tipoRecebedorId", mot_recebedor[0]["id"]), ("nomeRecebedor", "Ana Souza"),
+        ("avarias", png()), ("observacaoAvaria", "caixa amassada")])
+    checar("entrega completa é registrada e encerrada", s == 201 and c.get("entregaStatus") == "ENCERRADA_COM_SUCESSO", (s, c))
+    receb = sql(f"SELECT identificacao_recebedor, nome_recebedor FROM comprovante_entrega WHERE entrega_id = '{ef}'")
+    checar("comprovante guarda 'Tipo - Nome' e o nome", receb == f"{mot_recebedor[0]['descricao']} - Ana Souza|Ana Souza", receb)
+    tipos = [f["tipo"] for f in req("GET", f"/api/v1/gestao/entregas/{ef}/fotos", adm)[1]]
+    checar("empresa vê as 6 fotos (retirada, 2 avarias, porta, avaria, BDO assinado)",
+           sorted(tipos) == sorted(["RETIRADA", "AVARIA_RETIRADA", "AVARIA_RETIRADA", "PORTA", "AVARIA_ENTREGA", "BDO_ASSINADO"]), tipos)
+    fotos = req("GET", f"/api/v1/gestao/entregas/{ef}/fotos", adm)[1]
+    s, _ = req("GET", f"/api/v1/gestao/entregas/{ef}/fotos/{fotos[0]['id']}", adm)
+    checar("a empresa baixa o arquivo da foto", s == 200, s)
+    s, _ = req("GET", f"/api/v1/gestao/entregas/{ef}/fotos/{fotos[0]['id']}", m1)
+    checar("motorista não acessa as fotos da gestão (403)", s == 403, s)
+    s, _ = req("GET", f"/api/v1/gestao/entregas/{ea}/fotos/{fotos[0]['id']}", adm)
+    checar("foto de outra entrega não vaza (404)", s == 404, s)
+    hist = historico(adm, ef)
+    checar("histórico tem a retirada antes da viagem", "BAGAGEM_RETIRADA" in hist and hist.index("BAGAGEM_RETIRADA") < hist.index("VIAGEM_INICIADA"), hist)
 
     falhas = [r for r in resultados if not r[1]]
     print(f"\n{len(resultados) - len(falhas)} de {len(resultados)} verificações passaram.")
