@@ -452,6 +452,59 @@ def main():
     s, c = req("POST", f"/api/v1/entregas/{eh}/comprovante/correcao", m1, formulario=[("motivoId", mot_corr[0]["id"]), ("fotoPorta", png())])
     checar("depois de 24 h a correcao e bloqueada (409)", s == 409 and "24 horas" in msg(c), (s, c))
 
+    print("\n--- Item 7: viagem calculada a partir do aeroporto ---")
+    bases = req("GET", "/api/v1/configuracoes/bases-aeroportuarias", adm)[1]
+    if not any(b["codigoIata"] == "GYN" for b in bases):
+        s, c = req("POST", "/api/v1/configuracoes/bases-aeroportuarias", adm, corpo={"codigoIata": "GYN", "nome": "Santa Genoveva"})
+        assert s == 201, (s, c)
+    gyn = [b for b in req("GET", "/api/v1/configuracoes/bases-aeroportuarias", adm)[1] if b["codigoIata"] == "GYN"][0]
+    if not gyn["principal"]:
+        req("POST", f"/api/v1/configuracoes/bases-aeroportuarias/{gyn['id']}/principal", adm)
+    gyn = [b for b in req("GET", "/api/v1/configuracoes/bases-aeroportuarias", adm)[1] if b["codigoIata"] == "GYN"][0]
+    checar("base GYN principal, com a cidade do aeroporto", gyn["principal"] is True and gyn["cidade"] == "Goiânia", gyn)
+    s, c = req("POST", "/api/v1/configuracoes/bases-aeroportuarias", adm, corpo={"codigoIata": "XXX", "nome": "Inexistente"})
+    checar("base com aeroporto fora do cadastro e recusada (400)", s == 400, (s, c))
+
+    def entregar_completo(token, entrega_id):
+        s, c = retirar(token, entrega_id)
+        assert s == 201, ("retirada", s, c)
+        s, c = req("POST", f"/api/v1/entregas/{entrega_id}/rotas/calcular", token,
+                   corpo={"origemAtual": {"latitude": -16.632, "longitude": -49.2207}, "destinoManual": None})
+        assert s == 200, ("calcular", s, c)
+        alt = c["alternativas"][0]["id"]
+        s, c = req("POST", f"/api/v1/entregas/{entrega_id}/rotas/selecionar", token,
+                   corpo={"tipoSelecao": "SUGERIDA", "alternativaId": alt, "justificativa": None, "tracadoManual": None})
+        assert s == 200, ("selecionar", s, c)
+        s, c = req("POST", f"/api/v1/entregas/{entrega_id}/viagem/iniciar", token, corpo={"lat": -16.632, "lng": -49.2207})
+        assert s in (200, 201), ("iniciar", s, c)
+        agora = __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat().replace("+00:00", "Z")
+        s, c = req("POST", f"/api/v1/entregas/{entrega_id}/comprovante", token, formulario=[
+            ("foto", png()), ("dataHora", agora), ("latitude", "-16.686"), ("longitude", "-49.264"), ("idLocal", str(uuid.uuid4())),
+            ("fotoPorta", png()), ("tipoRecebedorId", mot_recebedor[0]["id"]), ("nomeRecebedor", "Ana"),
+            ("justificativaDivergencia", "teste automatizado")])
+        assert s == 201, ("comprovante", s, c)
+
+    def bdo_em(cidade, endereco, cep):
+        numero = "TST" + uuid.uuid4().hex[:7].upper()
+        s, b = req("POST", "/api/v1/gestao/bdos", adm, corpo={"campos": campos_bdo(
+            numero, "Passageiro Cobranca", enderecoEntrega=endereco, cidade=cidade, uf="GO", cep=cep, aeroportoRetirada="GYN"),
+            "textoOriginal": None})
+        assert s == 201, (s, b)
+        return b["id"]
+
+    na_base = assumir(m1, bdo_em("Goiânia", "Av. Goiás, 100", "74005-010"))[1]["id"]
+    entregar_completo(m1, na_base)
+    regra = sql(f"SELECT base_cobranca, regra_cobranca FROM trajeto WHERE entrega_id = '{na_base}'")
+    checar("entrega em Goiania (cidade da base) fica com valor fixo", regra == "GYN|FIXO_CIDADE_BASE", regra)
+
+    fora = assumir(m1, bdo_em("Anápolis", "Av. Brasil, 1000", "75110-000"))[1]["id"]
+    entregar_completo(m1, fora)
+    regra = sql(f"SELECT base_cobranca || '|' || regra_cobranca FROM trajeto WHERE entrega_id = '{fora}'")
+    km_ida, km_volta = sql(f"SELECT km_ida_final || '|' || km_volta_final FROM trajeto WHERE entrega_id = '{fora}'").split("|")
+    checar("entrega em Anapolis (fora da cidade da base) paga por km", regra == "GYN|POR_KM", regra)
+    checar("ida e volta calculadas a partir do aeroporto (dezenas de km ate Anapolis)",
+           float(km_ida) > 40 and float(km_volta) > 40, (km_ida, km_volta))
+
     falhas = [r for r in resultados if not r[1]]
     print(f"\n{len(resultados) - len(falhas)} de {len(resultados)} verificações passaram.")
     return 1 if falhas else 0
