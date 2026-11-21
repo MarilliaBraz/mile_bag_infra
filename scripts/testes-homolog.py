@@ -353,6 +353,11 @@ def main():
     checar("banco guarda origem, malas, aeroporto, telex e quem incluiu", guardado == "EMPRESA|CONFIRMADO|2|GYN|t|t", guardado)
     s, iguais = req("GET", f"/api/v1/gestao/bdos?numero={numero_telex.lower()}", adm)
     checar("numero repetido e encontrado antes de incluir de novo", s == 200 and len(iguais) == 1, (s, iguais))
+    # BDO antigo gravado antes da normalizacao (minusculas e espacos) tambem conta como repetido.
+    sql(f"UPDATE bdo SET numero = lower(substr(numero, 1, 5)) || ' ' || substr(numero, 6) WHERE id = '{incl['id']}'")
+    s, iguais = req("GET", f"/api/v1/gestao/bdos?numero={numero_telex}", adm)
+    checar("numero gravado em minusculas e com espaco tambem e achado", s == 200 and len(iguais) == 1, (s, iguais))
+    sql(f"UPDATE bdo SET numero = '{numero_telex}' WHERE id = '{incl['id']}'")
     s, _ = req("POST", "/api/v1/bdos", m1, multipart=("bdo.png", png()))
     checar("captura por foto do motorista nao existe mais", s in (403, 404, 405), s)
     s, lote = req("POST", "/api/v1/sync/eventos", m1, corpo={"eventos": [{
