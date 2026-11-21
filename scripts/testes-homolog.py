@@ -369,6 +369,27 @@ def main():
     hist_bdo = sql(f"SELECT count(*) FROM bdo WHERE numero = '{numero_telex}'")
     checar("um so BDO com o numero do telex", hist_bdo == "1", hist_bdo)
 
+    print("\n--- Segunda via do BDO (PDF e e-mail) ---")
+    g, _ = novo_bdo(adm, "G")
+    s, eg = assumir(m1, g)
+    assert s in (200, 201), (s, eg)
+    s, pdf = req("GET", f"/api/v1/entregas/{eg['id']}/segunda-via-bdo", m1)
+    checar("motorista responsavel baixa a segunda via em PDF", s == 200 and isinstance(pdf, bytes) and pdf.startswith(b"%PDF"), s)
+    s, _ = req("GET", f"/api/v1/entregas/{eg['id']}/segunda-via-bdo", m2)
+    checar("outro motorista nao baixa a segunda via (403)", s == 403, s)
+    s, _ = req("GET", f"/api/v1/entregas/{ef}/segunda-via-bdo", m1)
+    checar("entrega ja entregue nao emite segunda via para o motorista (409)", s == 409, s)
+    s, pdf = req("GET", f"/api/v1/gestao/bdos/{g}/segunda-via", adm)
+    checar("empresa baixa a segunda via de qualquer BDO", s == 200 and isinstance(pdf, bytes) and pdf.startswith(b"%PDF"), s)
+    s, _ = req("GET", f"/api/v1/gestao/bdos/{g}/segunda-via", m1)
+    checar("motorista nao usa a segunda via da gestao (403)", s == 403, s)
+    s, c = req("POST", f"/api/v1/entregas/{eg['id']}/segunda-via-bdo/email", m1, corpo={"email": "nao-e-email"})
+    checar("e-mail invalido e recusado (400)", s == 400, (s, c))
+    s, c = req("POST", f"/api/v1/gestao/bdos/{g}/segunda-via/email", adm, corpo={"email": "grafica@exemplo.com"})
+    checar("na homologacao (SMTP desligado) o envio avisa que esta desativado (503)", s == 503 and "desativado" in msg(c), (s, c))
+    envios = sql(f"SELECT count(*) FROM envio_segunda_via_bdo WHERE bdo_id = '{g}'")
+    checar("envio que nao saiu nao fica registrado", envios == "0", envios)
+
     falhas = [r for r in resultados if not r[1]]
     print(f"\n{len(resultados) - len(falhas)} de {len(resultados)} verificações passaram.")
     return 1 if falhas else 0
