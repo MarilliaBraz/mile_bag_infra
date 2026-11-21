@@ -304,6 +304,12 @@ def main():
     checar("entrega sem a foto na porta é recusada", s in (400, 422) and "porta" in str(msg(c)).lower(), (s, c))
     s, c = req("POST", f"/api/v1/entregas/{ef}/comprovante", m1, formulario=base + [("fotoPorta", png())])
     checar("entrega sem quem assinou é recusada", s in (400, 422), (s, c))
+    s, c = req("POST", f"/api/v1/entregas/{ef}/comprovante", m2, formulario=base + [
+        ("fotoPorta", png()), ("tipoRecebedorId", mot_recebedor[0]["id"]), ("nomeRecebedor", "Ana Souza")])
+    checar("outro motorista nao registra a entrega de um colega (403)", s == 403, (s, c))
+    s, c = req("POST", f"/api/v1/entregas/{ef}/comprovante", adm, formulario=base + [
+        ("fotoPorta", png()), ("tipoRecebedorId", mot_recebedor[0]["id"]), ("nomeRecebedor", "Ana Souza")])
+    checar("administrador nao registra a entrega no lugar do motorista (403)", s == 403, (s, c))
     s, c = req("POST", f"/api/v1/entregas/{ef}/comprovante", m1, formulario=base + [
         ("fotoPorta", png()), ("tipoRecebedorId", mot_recebedor[0]["id"]), ("nomeRecebedor", "Ana Souza"),
         ("avarias", png()), ("observacaoAvaria", "caixa amassada")])
