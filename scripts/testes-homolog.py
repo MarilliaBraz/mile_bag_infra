@@ -74,8 +74,10 @@ def req(metodo, caminho, token=None, corpo=None, multipart=None, formulario=None
     r = urllib.request.Request(URL + caminho, data=dados, method=metodo, headers=cabecalhos)
     try:
         with urllib.request.urlopen(r, timeout=60) as resp:
-            txt = resp.read().decode() or "null"
-            return resp.status, json.loads(txt)
+            corpo = resp.read()
+            if "json" not in (resp.headers.get("Content-Type") or "json"):
+                return resp.status, corpo
+            return resp.status, json.loads(corpo.decode() or "null")
     except urllib.error.HTTPError as e:
         txt = e.read().decode()
         try:
@@ -113,14 +115,21 @@ def png():
     return b"\x89PNG\r\n\x1a\n" + bloco(b"IHDR", struct.pack(">IIBBBBB", 10, 10, 8, 2, 0, 0, 0)) + bloco(b"IDAT", bruto) + bloco(b"IEND", b"")
 
 
-def novo_bdo(token_motorista, rotulo):
-    s, bdo = req("POST", "/api/v1/bdos", token_motorista, multipart=("bdo.png", png()))
-    assert s == 201, (s, bdo)
+def campos_bdo(numero, passageiro, **extra):
+    campos = {"numero": numero, "passageiroNome": passageiro, "enderecoEntrega": "Av. Goiás, 100", "companhiaAerea": "LATAM",
+              "telefonePassageiro": "62999990000", "emailPassageiro": None, "etiquetaBagagem": "LA123456", "tipoProcesso": "AHL",
+              "cidade": "Goiânia", "uf": "GO", "cep": "74000-100", "instrucoesEntrega": None, "aeroportoRetirada": "GYN",
+              "vooChegada": None, "dataEntregaPrevista": None, "quantidadeMalas": 1, "coresBagagem": None, "valorInformado": None}
+    campos.update(extra)
+    return campos
+
+
+def novo_bdo(token_admin, rotulo):
+    """V49: o BDO entra pela empresa (a captura por foto do motorista saiu)."""
     numero = "TST" + uuid.uuid4().hex[:7].upper()
-    campos = {"numero": numero, "passageiroNome": f"Passageiro {rotulo}", "enderecoEntrega": "Av. Goiás, 100, Goiânia - GO",
-              "companhiaAerea": "LA", "telefonePassageiro": "62999990000", "emailPassageiro": None, "etiquetaBagagem": "LA123456"}
-    s, bdo = req("PATCH", f"/api/v1/bdos/{bdo['id']}/conferencia", token_motorista, corpo=campos)
-    assert s == 200, (s, bdo)
+    s, bdo = req("POST", "/api/v1/gestao/bdos", token_admin, corpo={"campos": campos_bdo(numero, f"Passageiro {rotulo}"),
+                                                                      "textoOriginal": None})
+    assert s == 201, (s, bdo)
     return bdo["id"], numero
 
 
@@ -179,7 +188,7 @@ def main():
            f"{len(mot_dispensa)} / {len(mot_cancel)}")
 
     print("\n--- Item 1: dispensa ---")
-    a, _ = novo_bdo(m1, "A")
+    a, _ = novo_bdo(adm, "A")
     s, ent = assumir(m1, a)
     checar("motorista 1 assume o BDO A", s in (200, 201), (s, ent))
     ea = ent["id"]
@@ -190,7 +199,7 @@ def main():
     checar("BDO A volta para os disponíveis do motorista 2", a in disponiveis(m2))
     checar("histórico tem a dispensa sem bagagem", "DISPENSA_SEM_BAGAGEM" in historico(adm, ea), historico(adm, ea))
 
-    b, _ = novo_bdo(m1, "B")
+    b, _ = novo_bdo(adm, "B")
     eb = assumir(m1, b)[1]["id"]
     sair_em_rota(m1, eb)
     s, c = req("POST", f"/api/v1/entregas/{eb}/dispensas", m1, corpo={})
@@ -210,7 +219,7 @@ def main():
     s, c = req("POST", f"/api/v1/gestao/bdos/{b}/cancelamento", m2, corpo={"motivoId": mot_cancel[0]["id"]})
     checar("motorista não consegue cancelar BDO (403)", s == 403, (s, c))
 
-    cbdo, _ = novo_bdo(m1, "C")
+    cbdo, _ = novo_bdo(adm, "C")
     linhas = req("GET", "/api/v1/gestao/entregas", adm)[1]
     linha_c = next((l for l in linhas if l["bdoId"] == cbdo), None)
     checar("tela Entregas mostra BDO que ninguém assumiu (sem entrega)", linha_c and linha_c["entregaId"] is None
@@ -230,7 +239,7 @@ def main():
     uso_depois = uso_plano(cbdo)
     checar("BDO cancelado deixa de contar no volume do plano", uso_depois == uso_antes - 1, (uso_antes, uso_depois))
 
-    d, _ = novo_bdo(m1, "D")
+    d, _ = novo_bdo(adm, "D")
     ed = assumir(m1, d)[1]["id"]
     s, c = req("POST", f"/api/v1/gestao/bdos/{d}/cancelamento", adm, corpo={"motivoId": mot_cancel[1]["id"]})
     checar("cancelar entrega atribuída é aceito e registra o motorista", s == 201 and c.get("motoristaAnteriorNome") == "Motorista Teste 1", (s, c))
@@ -243,7 +252,7 @@ def main():
     s, c = req("POST", f"/api/v1/entregas/{ed}/viagem/iniciar", m1, corpo={})
     checar("iniciar viagem em entrega cancelada: mensagem da empresa", s == 409 and msg(c) == CANCELADA, (s, c))
 
-    e, _ = novo_bdo(m1, "E")
+    e, _ = novo_bdo(adm, "E")
     ee = assumir(m1, e)[1]["id"]
     sair_em_rota(m1, ee)
     codigo = sql(f"SELECT codigo FROM link_acompanhamento WHERE entrega_id = '{ee}' ORDER BY criado_em DESC LIMIT 1")
@@ -269,7 +278,7 @@ def main():
     print("\n--- Itens 4 e 5: retirada e passo a passo da entrega ---")
     mot_recebedor = motivos(m1, "RECEBEDOR")
     checar("empresa tem a lista de quem pode assinar (5 opções)", len(mot_recebedor) == 5, len(mot_recebedor))
-    f, _ = novo_bdo(m1, "F")
+    f, _ = novo_bdo(adm, "F")
     ef = assumir(m1, f)[1]["id"]
     det = req("GET", f"/api/v1/entregas/{ef}/detalhe", m1)[1]
     checar("entrega assumida ainda sem retirada", det.get("retiradaRegistrada") is False, det.get("retiradaRegistrada"))
@@ -313,6 +322,52 @@ def main():
     checar("foto de outra entrega não vaza (404)", s == 404, s)
     hist = historico(adm, ef)
     checar("histórico tem a retirada antes da viagem", "BAGAGEM_RETIRADA" in hist and hist.index("BAGAGEM_RETIRADA") < hist.index("VIAGEM_INICIADA"), hist)
+
+    print("\n--- Inclusao do BDO pela empresa e fim da captura por foto ---")
+    numero_telex = "GYNLA" + str(uuid.uuid4().int)[:5]
+    telex = (f"WM BDO AHL {numero_telex}/0013GMT/16SEP26\nDS GYNLA03 - PACK AND GO - EXPRESSA\nLATAM AIRLINES GROUP....\n"
+             "NM01 FICTICIA\nGN01 MARIA\nPA AV EXEMPLO 100 APT 1\nYP GOIANIA\nST GO\nCO BR\nZP 74000100 .DD 15SEP .DW .CS D/BRL132\n"
+             "PN01 55 62 9 0000 0001\nEA01 MARIA/U/TESTE/A/EXEMPLO/D/COM\nLD01 LA3266 GYN 11:35 - 13:15\n"
+             "TN01 LA000001 .TN02 LA000002\nCT01 GN22 .CT02 BK22\nRT GRU/GYN\n/RECHARGE -/SIGNATURE FOR RECEIPT OF 2 BAG")
+    s, _ = req("POST", "/api/v1/gestao/bdos/leitura", m1, corpo={"texto": telex})
+    checar("motorista nao le nem inclui BDO pela gestao (403)", s == 403, s)
+    s, lido = req("POST", "/api/v1/gestao/bdos/leitura", adm, corpo={"texto": telex})
+    checar("telex colado preenche os campos (numero, passageiro, endereco, aeroporto, voo, 2 malas, e-mail)",
+           s == 200 and lido["numero"] == numero_telex and lido["passageiroNome"] == "MARIA FICTICIA"
+           and lido["enderecoEntrega"] == "AV EXEMPLO 100 APT 1" and lido["cep"] == "74000-100" and lido["aeroportoRetirada"] == "GYN"
+           and lido["vooChegada"] == "LA3266" and lido["quantidadeMalas"] == 2 and lido["emailPassageiro"] == "maria_teste@exemplo.com",
+           (s, lido))
+    s, c = req("POST", "/api/v1/gestao/bdos/leitura", adm, corpo={"texto": "   "})
+    checar("texto vazio e recusado (400)", s == 400, (s, c))
+    s, c = req("POST", "/api/v1/gestao/bdos", adm, corpo={"campos": campos_bdo("TSTSEMNOME", None), "textoOriginal": None})
+    checar("inclusao sem passageiro e recusada (400)", s == 400 and "nome do passageiro" in msg(c), (s, c))
+    s, c = req("POST", "/api/v1/gestao/bdos", adm, corpo={"campos": campos_bdo("TSTUF", "P", uf="GOIAS"), "textoOriginal": None})
+    checar("UF por extenso e recusada (400)", s == 400, (s, c))
+    s, incl = req("POST", "/api/v1/gestao/bdos", adm, corpo={"campos": lido, "textoOriginal": telex})
+    checar("BDO lido e incluido pela empresa (201, origem EMPRESA)", s == 201 and incl["origem"] == "EMPRESA", (s, incl))
+    checar("endereco completo montado com cidade, UF e CEP",
+           incl["campos"]["enderecoEntrega"] == "AV EXEMPLO 100 APT 1, GOIANIA - GO, 74000-100", incl["campos"]["enderecoEntrega"])
+    checar("BDO incluido aparece nos disponiveis do motorista", incl["id"] in disponiveis(m1))
+    guardado = sql(f"SELECT origem, status_conferencia, quantidade_malas, aeroporto_retirada, (texto_original IS NOT NULL), "
+                   f"(incluido_por IS NOT NULL) FROM bdo WHERE id = '{incl['id']}'")
+    checar("banco guarda origem, malas, aeroporto, telex e quem incluiu", guardado == "EMPRESA|CONFIRMADO|2|GYN|t|t", guardado)
+    s, iguais = req("GET", f"/api/v1/gestao/bdos?numero={numero_telex.lower()}", adm)
+    checar("numero repetido e encontrado antes de incluir de novo", s == 200 and len(iguais) == 1, (s, iguais))
+    # BDO antigo gravado antes da normalizacao (minusculas e espacos) tambem conta como repetido.
+    sql(f"UPDATE bdo SET numero = lower(substr(numero, 1, 5)) || ' ' || substr(numero, 6) WHERE id = '{incl['id']}'")
+    s, iguais = req("GET", f"/api/v1/gestao/bdos?numero={numero_telex}", adm)
+    checar("numero gravado em minusculas e com espaco tambem e achado", s == 200 and len(iguais) == 1, (s, iguais))
+    sql(f"UPDATE bdo SET numero = '{numero_telex}' WHERE id = '{incl['id']}'")
+    s, _ = req("POST", "/api/v1/bdos", m1, multipart=("bdo.png", png()))
+    checar("captura por foto do motorista nao existe mais", s in (403, 404, 405), s)
+    s, lote = req("POST", "/api/v1/sync/eventos", m1, corpo={"eventos": [{
+        "idLocal": str(uuid.uuid4()), "sequenciaLocal": 1, "tipoEvento": "BDO_CAPTURADO",
+        "timestampCriacaoLocal": "2026-11-21T10:00:00Z", "payload": {"imagemBase64": "", "nomeArquivo": "bdo.png"}}]})
+    r = lote["resultados"][0] if s == 200 else {}
+    checar("foto de BDO antiga na fila do celular volta com o motivo",
+           r.get("resultado") == "ERRO" and "desativada" in (r.get("motivo") or ""), (s, lote))
+    hist_bdo = sql(f"SELECT count(*) FROM bdo WHERE numero = '{numero_telex}'")
+    checar("um so BDO com o numero do telex", hist_bdo == "1", hist_bdo)
 
     falhas = [r for r in resultados if not r[1]]
     print(f"\n{len(resultados) - len(falhas)} de {len(resultados)} verificações passaram.")
