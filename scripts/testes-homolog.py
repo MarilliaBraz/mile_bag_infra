@@ -413,6 +413,9 @@ def main():
     fotos_h = req("GET", f"/api/v1/gestao/entregas/{eh}/fotos", adm)[1]
     checar("foto antiga da retirada fica guardada como substituida",
            sorted((f["tipo"], f["substituida"]) for f in fotos_h) == [("RETIRADA", False), ("RETIRADA", True)], fotos_h)
+    req("POST", f"/api/v1/entregas/{eh}/rotas/selecionar", m1, corpo={
+        "tipoSelecao": "PROPRIA", "alternativaId": None, "justificativa": "teste automatizado",
+        "tracadoManual": [{"latitude": -16.632, "longitude": -49.221}, {"latitude": -16.686, "longitude": -49.264}]})
     s, c = req("POST", f"/api/v1/entregas/{eh}/viagem/iniciar", m1, corpo={})
     assert s in (200, 201), (s, c)
     s, c = req("POST", f"/api/v1/entregas/{eh}/retirada/correcao", m1, formulario=[("foto", png()), ("motivoId", mot_corr[0]["id"])])
