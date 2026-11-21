@@ -390,6 +390,62 @@ def main():
     envios = sql(f"SELECT count(*) FROM envio_segunda_via_bdo WHERE bdo_id = '{g}'")
     checar("envio que nao saiu nao fica registrado", envios == "0", envios)
 
+    print("\n--- Item 6: voltar para alterar com motivo (auditoria) ---")
+    mot_corr = motivos(m1, "CORRECAO")
+    checar("motorista le a lista de motivos de correcao (5 padrao)", len(mot_corr) == 5, len(mot_corr))
+    h, _ = novo_bdo(adm, "H")
+    eh = assumir(m1, h)[1]["id"]
+    s, c = retirar(m1, eh)
+    assert s == 201, (s, c)
+    s, c = req("POST", f"/api/v1/entregas/{eh}/retirada/correcao", m1, formulario=[("foto", png())])
+    checar("corrigir a retirada sem motivo e recusado (400)", s == 400, (s, c))
+    s, c = req("POST", f"/api/v1/entregas/{eh}/retirada/correcao", m2, formulario=[("foto", png()), ("motivoId", mot_corr[0]["id"])])
+    checar("outro motorista nao corrige a retirada (409)", s == 409, (s, c))
+    s, c = req("POST", f"/api/v1/entregas/{eh}/retirada/correcao", m1, formulario=[
+        ("foto", png()), ("motivoId", mot_corr[0]["id"]), ("complemento", "foto tremida")])
+    checar("retirada corrigida com motivo antes de iniciar a viagem", s == 200, (s, c))
+    fotos_h = req("GET", f"/api/v1/gestao/entregas/{eh}/fotos", adm)[1]
+    checar("foto antiga da retirada fica guardada como substituida",
+           sorted((f["tipo"], f["substituida"]) for f in fotos_h) == [("RETIRADA", False), ("RETIRADA", True)], fotos_h)
+    s, c = req("POST", f"/api/v1/entregas/{eh}/viagem/iniciar", m1, corpo={})
+    assert s in (200, 201), (s, c)
+    s, c = req("POST", f"/api/v1/entregas/{eh}/retirada/correcao", m1, formulario=[("foto", png()), ("motivoId", mot_corr[0]["id"])])
+    checar("depois de iniciar a viagem a retirada nao e mais corrigida (409)", s == 409, (s, c))
+    agora_iso = __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat().replace("+00:00", "Z")
+    correcoes = json.dumps([{"etapa": "FOTO_PORTA", "motivoId": mot_corr[0]["id"], "complemento": None,
+                             "antes": "foto anterior", "depois": "foto nova", "dataHora": agora_iso}])
+    s, c = req("POST", f"/api/v1/entregas/{eh}/comprovante", m1, formulario=[
+        ("foto", png()), ("dataHora", agora_iso), ("latitude", "-16.686"), ("longitude", "-49.264"), ("idLocal", str(uuid.uuid4())),
+        ("fotoPorta", png()), ("tipoRecebedorId", mot_recebedor[0]["id"]), ("nomeRecebedor", "Ana"), ("correcoes", correcoes)])
+    checar("entrega com correcao feita antes de finalizar e registrada", s == 201, (s, c))
+    detalhe = req("GET", f"/api/v1/entregas/{eh}/detalhe", m1)[1]
+    checar("entrega finalizada mostra ate quando pode ser corrigida", detalhe.get("corrigivelAte") is not None, detalhe.get("corrigivelAte"))
+    corrigiveis = [e["entregaId"] for e in req("GET", "/api/v1/motorista/entregas-corrigiveis", m1)[1]]
+    checar("painel lista a entrega entre as que ainda podem ser corrigidas", eh in corrigiveis, corrigiveis)
+    s, c = req("POST", f"/api/v1/entregas/{eh}/comprovante/correcao", m2, formulario=[("motivoId", mot_corr[3]["id"]),
+                                                                                     ("tipoRecebedorId", mot_recebedor[1]["id"]), ("nomeRecebedor", "Rui")])
+    checar("outro motorista nao corrige a entrega finalizada (409)", s == 409, (s, c))
+    s, c = req("POST", f"/api/v1/entregas/{eh}/comprovante/correcao", m1, formulario=[
+        ("motivoId", mot_corr[3]["id"]), ("tipoRecebedorId", mot_recebedor[1]["id"]), ("nomeRecebedor", "Rui Vizinho"), ("fotoDocumento", png())])
+    checar("motorista corrige quem assinou e a foto do BDO assinado (ate 24 h)", s == 200, (s, c))
+    receb = sql(f"SELECT identificacao_recebedor FROM comprovante_entrega WHERE entrega_id = '{eh}'")
+    checar("comprovante passa a ter o recebedor corrigido", receb == f"{mot_recebedor[1]['descricao']} - Rui Vizinho", receb)
+    fotos_h = req("GET", f"/api/v1/gestao/entregas/{eh}/fotos", adm)[1]
+    checar("foto do BDO assinado anterior fica guardada como substituida",
+           any(f["tipo"] == "BDO_ASSINADO" and f["substituida"] for f in fotos_h) and any(f["tipo"] == "BDO_ASSINADO" and not f["substituida"] for f in fotos_h),
+           fotos_h)
+    hist = req("GET", f"/api/v1/gestao/entregas/{eh}/historico", adm)[1]["eventos"]
+    etapas = sorted(e["descricao"] for e in hist if e["tipo"] == "CORRECAO")
+    checar("historico tem cada correcao com a etapa (retirada, porta no fluxo, recebedor e BDO)",
+           etapas == ["FOTO_BDO_ASSINADO", "FOTO_PORTA", "FOTO_RETIRADA", "RECEBEDOR"], etapas)
+    checar("historico mostra o antes e o depois do recebedor",
+           any("Antes: " + mot_recebedor[0]["descricao"] + " - Ana" in (e["detalhe"] or "") for e in hist if e["descricao"] == "RECEBEDOR"), hist)
+    linha = [e for e in req("GET", "/api/v1/gestao/entregas", adm)[1] if e["entregaId"] == eh]
+    checar("lista da empresa mostra o selo Corrigida", linha and linha[0]["corrigida"] is True, linha)
+    sql(f"UPDATE comprovante_entrega SET criado_em = now() - interval '25 hours' WHERE entrega_id = '{eh}'")
+    s, c = req("POST", f"/api/v1/entregas/{eh}/comprovante/correcao", m1, formulario=[("motivoId", mot_corr[0]["id"]), ("fotoPorta", png())])
+    checar("depois de 24 h a correcao e bloqueada (409)", s == 409 and "24 horas" in msg(c), (s, c))
+
     falhas = [r for r in resultados if not r[1]]
     print(f"\n{len(resultados) - len(falhas)} de {len(resultados)} verificações passaram.")
     return 1 if falhas else 0
