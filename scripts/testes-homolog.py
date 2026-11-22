@@ -178,11 +178,30 @@ def uso_plano(bdo_qualquer):
                    "AND NOT EXISTS (SELECT 1 FROM cancelamento_bdo x WHERE x.bdo_id=b.id)"))
 
 
+STATUS_EM_ABERTO = {"AGUARDANDO_ATRIBUICAO", "ATRIBUIDA", "EM_ANDAMENTO", "REABERTA"}
+
+
+def cancelar_bdos_abertos_criados(token_admin, bdos_de_antes):
+    """Cancela os BDOs criados nesta execucao que ficaram em aberto. Sem isso, a cada execucao a homologacao acumula
+    BDOs no mesmo endereco (item 8 os agrupa) e disponiveis para os motoristas de teste."""
+    motivo = motivos(token_admin, "CANCELAMENTO")[0]["id"]
+    abertos = [e for e in req("GET", "/api/v1/gestao/entregas", token_admin)[1]
+               if e["bdoId"] not in bdos_de_antes and e["status"] in STATUS_EM_ABERTO]
+    for entrega in abertos:
+        s, c = req("POST", f"/api/v1/gestao/bdos/{entrega['bdoId']}/cancelamento", token_admin,
+                   corpo={"motivoId": motivo, "complemento": "Limpeza ao fim dos testes de homologacao"})
+        if s != 200:
+            print(f"Aviso: nao consegui cancelar o BDO {entrega.get('bdoNumero')} ({s}: {msg(c)})")
+    print(f"Limpeza: {len(abertos)} BDO(s) desta execucao cancelado(s).")
+
+
 def main():
     adm = login("MILEBAG_TESTE_ADMIN")
     m1 = login("MILEBAG_TESTE_MOTORISTA1")
     m2 = login("MILEBAG_TESTE_MOTORISTA2")
     CANCELADA = "A empresa cancelou esta entrega."
+    # Os BDOs que ja existiam: no fim, so os criados nesta execucao e ainda em aberto sao cancelados.
+    bdos_de_antes = {e["bdoId"] for e in req("GET", "/api/v1/gestao/entregas", adm)[1]}
 
     # V52: toda empresa tem bases e todo motorista tem base - preparar antes de qualquer BDO.
     def base_por_codigo(codigo, nome):
@@ -660,6 +679,8 @@ def main():
     finally:
         for caminho in criadas:
             req("DELETE", caminho, adm)
+
+    cancelar_bdos_abertos_criados(adm, bdos_de_antes)
 
     falhas = [r for r in resultados if not r[1]]
     print(f"\n{len(resultados) - len(falhas)} de {len(resultados)} verificações passaram.")
