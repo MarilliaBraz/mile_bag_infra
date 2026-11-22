@@ -21,6 +21,8 @@ import subprocess
 import sys
 import urllib.error
 import urllib.request
+import random
+import string
 import uuid
 import zlib
 
@@ -124,10 +126,10 @@ def campos_bdo(numero, passageiro, **extra):
     return campos
 
 
-def novo_bdo(token_admin, rotulo):
+def novo_bdo(token_admin, rotulo, **extra):
     """V49: o BDO entra pela empresa (a captura por foto do motorista saiu)."""
     numero = "TST" + uuid.uuid4().hex[:7].upper()
-    s, bdo = req("POST", "/api/v1/gestao/bdos", token_admin, corpo={"campos": campos_bdo(numero, f"Passageiro {rotulo}"),
+    s, bdo = req("POST", "/api/v1/gestao/bdos", token_admin, corpo={"campos": campos_bdo(numero, f"Passageiro {rotulo}", **extra),
                                                                       "textoOriginal": None})
     assert s == 201, (s, bdo)
     return bdo["id"], numero
@@ -552,6 +554,33 @@ def main():
         checar("base com motoristas ou BDOs nao pode ser removida (409)", s == 409, (s, c))
     finally:
         mover("MILEBAG_TESTE_MOTORISTA2", base_gyn)
+
+    print("\n--- Item 8: bagagem carona pelo mesmo endereco e quantidade de malas ---")
+    # Rua so com letras e unica por execucao: os BDOs de testes anteriores nao entram na sugestao.
+    rua = "Rua Carona " + "".join(random.choice(string.ascii_uppercase) for _ in range(8))
+    k_a, n_a = novo_bdo(adm, "K", enderecoEntrega=f"{rua}, 50", quantidadeMalas=2)
+    k_b, n_b = novo_bdo(adm, "L", enderecoEntrega=f"{rua.upper()} N 50 apto 3", quantidadeMalas=1)
+    _, n_c = novo_bdo(adm, "M", enderecoEntrega=f"{rua}, 52", quantidadeMalas=1)
+    ek = assumir(m1, k_a)[1]["id"]
+    s, sug = req("GET", f"/api/v1/entregas/{ek}/sugestoes-carona", m1)
+    checar("sugere como carona o BDO do mesmo endereco (e so ele)", s == 200 and [b["bdoNumero"] for b in sug] == [n_b], (s, sug))
+    checar("a sugestao traz a quantidade de malas", s == 200 and sug and sug[0]["quantidadeMalas"] == 1, sug)
+    s, c = req("GET", f"/api/v1/entregas/{ek}/sugestoes-carona", m2)
+    checar("outro motorista nao ve as sugestoes desta entrega (403)", s == 403, (s, c))
+    det = req("GET", f"/api/v1/entregas/{ek}/detalhe", m1)[1]
+    checar("detalhe da entrega mostra a quantidade de malas", det.get("quantidadeMalas") == 2, det.get("quantidadeMalas"))
+    linhas = {e["bdoNumero"]: e for e in req("GET", "/api/v1/gestao/entregas", adm)[1]}
+    checar("lista da empresa marca o mesmo endereco", linhas.get(n_a, {}).get("mesmoEnderecoQue") == [n_b]
+           and linhas.get(n_b, {}).get("mesmoEnderecoQue") == [n_a], (linhas.get(n_a), linhas.get(n_b)))
+    checar("numero diferente nao e marcado como mesmo endereco", linhas.get(n_c, {}).get("mesmoEnderecoQue") == [], linhas.get(n_c))
+    s, c = req("POST", f"/api/v1/entregas/{ek}/bagagens-carona", m1, corpo={"bdoId": k_b})
+    checar("motorista leva a sugestao como carona", s == 201, (s, c))
+    det = req("GET", f"/api/v1/entregas/{ek}/detalhe", m1)[1]
+    caronas = det.get("bagagensCarona", [])
+    checar("a carona mostra o numero do BDO e as malas", caronas and caronas[0]["bdoNumero"] == n_b and caronas[0]["quantidadeMalas"] == 1,
+           caronas)
+    s, sug = req("GET", f"/api/v1/entregas/{ek}/sugestoes-carona", m1)
+    checar("depois de levar, a sugestao some", s == 200 and sug == [], (s, sug))
 
     print("\n--- Busca de companhia aerea pelo nome e de base pela cidade ---")
     catalogo = req("GET", "/api/v1/catalogo/companhias-aereas", adm)[1]
