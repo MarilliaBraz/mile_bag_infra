@@ -557,6 +557,8 @@ def main():
     catalogo = req("GET", "/api/v1/catalogo/companhias-aereas", adm)[1]
     gol = [c for c in catalogo if c["codigoIata"] == "G3"]
     checar("lista de companhias traz a Gol (G3 / GLO)", gol and gol[0]["codigoIcao"] == "GLO" and "Gol" in gol[0]["nome"], gol)
+    conecta = [c for c in catalogo if c["codigoIata"] == "2F"]
+    checar("lista traz as regionais (Azul Conecta 2F / ACN)", conecta and conecta[0]["codigoIcao"] == "ACN", conecta)
     aeroportos = req("GET", "/api/v1/aeroportos", adm)
     checar("administrador busca o aeroporto pela cidade (Goiania -> GYN)", aeroportos[0] == 200
            and any(a["codigo"] == "GYN" and a["cidade"] == "Goiânia" for a in aeroportos[1]), aeroportos[0])
