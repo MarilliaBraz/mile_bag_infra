@@ -190,7 +190,7 @@ def cancelar_bdos_abertos_criados(token_admin, bdos_de_antes):
     for entrega in abertos:
         s, c = req("POST", f"/api/v1/gestao/bdos/{entrega['bdoId']}/cancelamento", token_admin,
                    corpo={"motivoId": motivo, "complemento": "Limpeza ao fim dos testes de homologacao"})
-        if s != 200:
+        if s not in (200, 201):  # o cancelamento responde 201 (cria o registro do cancelamento)
             print(f"Aviso: nao consegui cancelar o BDO {entrega.get('bdoNumero')} ({s}: {msg(c)})")
     print(f"Limpeza: {len(abertos)} BDO(s) desta execucao cancelado(s).")
 
