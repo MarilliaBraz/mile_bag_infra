@@ -553,6 +553,44 @@ def main():
     finally:
         mover("MILEBAG_TESTE_MOTORISTA2", base_gyn)
 
+    print("\n--- Busca de companhia aerea pelo nome e de base pela cidade ---")
+    catalogo = req("GET", "/api/v1/catalogo/companhias-aereas", adm)[1]
+    gol = [c for c in catalogo if c["codigoIata"] == "G3"]
+    checar("lista de companhias traz a Gol (G3 / GLO)", gol and gol[0]["codigoIcao"] == "GLO" and "Gol" in gol[0]["nome"], gol)
+    conecta = [c for c in catalogo if c["codigoIata"] == "2F"]
+    checar("lista traz as regionais (Azul Conecta 2F / ACN)", conecta and conecta[0]["codigoIcao"] == "ACN", conecta)
+    aeroportos = req("GET", "/api/v1/aeroportos", adm)
+    checar("administrador busca o aeroporto pela cidade (Goiania -> GYN)", aeroportos[0] == 200
+           and any(a["codigo"] == "GYN" and a["cidade"] == "Goiânia" for a in aeroportos[1]), aeroportos[0])
+    s, c = req("POST", "/api/v1/configuracoes/companhias-aereas", adm, corpo={"codigoIata": "XX", "nome": "Inventada"})
+    checar("companhia fora da lista e recusada (400)", s == 400, (s, c))
+    # Companhia e aeroporto que a empresa de teste ainda nao tem: nada existente e apagado, e o criado sai no finally.
+    ja_cias = {a["codigoIata"] for a in req("GET", "/api/v1/configuracoes/companhias-aereas", adm)[1]}
+    ja_bases = {b["codigoIata"] for b in req("GET", "/api/v1/configuracoes/bases-aeroportuarias", adm)[1]}
+    cia = next((c for c in catalogo if c["codigoIata"] not in ja_cias), None)
+    livre = next((a for a in aeroportos[1] if a["codigo"] not in ja_bases), None) if aeroportos[0] == 200 else None
+    criadas = []
+    try:
+        if cia:
+            s, c = req("POST", "/api/v1/configuracoes/companhias-aereas", adm, corpo={"codigoIata": cia["codigoIcao"].lower(), "nome": ""})
+            if s in (200, 201):
+                criadas.append(f"/api/v1/configuracoes/companhias-aereas/{c['id']}")
+            checar("codigo ICAO vira o IATA e o nome vem da lista", s in (200, 201) and c["codigoIata"] == cia["codigoIata"]
+                   and c["nome"] == cia["nome"], (s, c))
+        else:
+            checar("codigo ICAO vira o IATA e o nome vem da lista", False, "sem companhia livre na lista")
+        if livre:
+            s, c = req("POST", "/api/v1/configuracoes/bases-aeroportuarias", adm, corpo={"codigoIata": livre["codigo"].lower(), "nome": ""})
+            if s in (200, 201):
+                criadas.append(f"/api/v1/configuracoes/bases-aeroportuarias/{c['id']}")
+            checar("base sem nome recebe o nome do aeroporto", s in (200, 201) and c["codigoIata"] == livre["codigo"]
+                   and c["nome"] == livre["nome"], (s, c))
+        else:
+            checar("base sem nome recebe o nome do aeroporto", False, "sem aeroporto livre")
+    finally:
+        for caminho in criadas:
+            req("DELETE", caminho, adm)
+
     falhas = [r for r in resultados if not r[1]]
     print(f"\n{len(resultados) - len(falhas)} de {len(resultados)} verificações passaram.")
     return 1 if falhas else 0
