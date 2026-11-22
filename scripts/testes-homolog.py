@@ -182,6 +182,30 @@ def main():
     m2 = login("MILEBAG_TESTE_MOTORISTA2")
     CANCELADA = "A empresa cancelou esta entrega."
 
+    # V52: toda empresa tem bases e todo motorista tem base - preparar antes de qualquer BDO.
+    def base_por_codigo(codigo, nome):
+        existentes = req("GET", "/api/v1/configuracoes/bases-aeroportuarias", adm)[1]
+        achada = [b for b in existentes if b["codigoIata"] == codigo]
+        if achada:
+            return achada[0]
+        s, c = req("POST", "/api/v1/configuracoes/bases-aeroportuarias", adm, corpo={"codigoIata": codigo, "nome": nome})
+        assert s == 201, (s, c)
+        return c
+
+    base_gyn = base_por_codigo("GYN", "Santa Genoveva")
+    if not base_gyn.get("principal"):
+        req("POST", f"/api/v1/configuracoes/bases-aeroportuarias/{base_gyn['id']}/principal", adm)
+    base_bsb = base_por_codigo("BSB", "Brasilia")
+    motoristas = {m["login"]: m for m in req("GET", "/api/v1/motoristas", adm)[1]}
+
+    def mover(chave, base):
+        motorista = motoristas[CFG[chave + "_LOGIN"]]
+        s, c = req("PATCH", f"/api/v1/motoristas/{motorista['id']}", adm, corpo={"baseId": base["id"]})
+        assert s == 200, (s, c)
+
+    mover("MILEBAG_TESTE_MOTORISTA1", base_gyn)
+    mover("MILEBAG_TESTE_MOTORISTA2", base_gyn)
+
     mot_dispensa = motivos(m1, "DISPENSA")
     mot_cancel = motivos(adm, "CANCELAMENTO")
     checar("empresa nova tem 4 motivos de dispensa e 4 de cancelamento", len(mot_dispensa) == 4 and len(mot_cancel) == 4,
@@ -454,6 +478,80 @@ def main():
     sql(f"UPDATE comprovante_entrega SET criado_em = now() - interval '25 hours' WHERE entrega_id = '{eh}'")
     s, c = req("POST", f"/api/v1/entregas/{eh}/comprovante/correcao", m1, formulario=[("motivoId", mot_corr[0]["id"]), ("fotoPorta", png())])
     checar("depois de 24 h a correcao e bloqueada (409)", s == 409 and "24 horas" in msg(c), (s, c))
+
+    print("\n--- Item 7: viagem calculada a partir do aeroporto ---")
+    gyn = [b for b in req("GET", "/api/v1/configuracoes/bases-aeroportuarias", adm)[1] if b["codigoIata"] == "GYN"][0]
+    checar("base GYN principal, com a cidade do aeroporto", gyn["principal"] is True and gyn["cidade"] == "Goiânia", gyn)
+    s, c = req("POST", "/api/v1/configuracoes/bases-aeroportuarias", adm, corpo={"codigoIata": "XXX", "nome": "Inexistente"})
+    checar("base com aeroporto fora do cadastro e recusada (400)", s == 400, (s, c))
+
+    def entregar_completo(token, entrega_id):
+        s, c = retirar(token, entrega_id)
+        assert s == 201, ("retirada", s, c)
+        s, c = req("POST", f"/api/v1/entregas/{entrega_id}/rotas/calcular", token,
+                   corpo={"origemAtual": {"latitude": -16.632, "longitude": -49.2207}, "destinoManual": None})
+        assert s == 200, ("calcular", s, c)
+        alt = c["alternativas"][0]["id"]
+        s, c = req("POST", f"/api/v1/entregas/{entrega_id}/rotas/selecionar", token,
+                   corpo={"tipoSelecao": "SUGERIDA", "alternativaId": alt, "justificativa": None, "tracadoManual": None})
+        assert s == 200, ("selecionar", s, c)
+        s, c = req("POST", f"/api/v1/entregas/{entrega_id}/viagem/iniciar", token, corpo={"lat": -16.632, "lng": -49.2207})
+        assert s in (200, 201), ("iniciar", s, c)
+        agora = __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat().replace("+00:00", "Z")
+        s, c = req("POST", f"/api/v1/entregas/{entrega_id}/comprovante", token, formulario=[
+            ("foto", png()), ("dataHora", agora), ("latitude", "-16.686"), ("longitude", "-49.264"), ("idLocal", str(uuid.uuid4())),
+            ("fotoPorta", png()), ("tipoRecebedorId", mot_recebedor[0]["id"]), ("nomeRecebedor", "Ana"),
+            ("justificativaDivergencia", "teste automatizado")])
+        assert s == 201, ("comprovante", s, c)
+
+    def bdo_em(cidade, endereco, cep):
+        numero = "TST" + uuid.uuid4().hex[:7].upper()
+        s, b = req("POST", "/api/v1/gestao/bdos", adm, corpo={"campos": campos_bdo(
+            numero, "Passageiro Cobranca", enderecoEntrega=endereco, cidade=cidade, uf="GO", cep=cep, aeroportoRetirada="GYN"),
+            "textoOriginal": None})
+        assert s == 201, (s, b)
+        return b["id"]
+
+    na_base = assumir(m1, bdo_em("Goiânia", "Av. Goiás, 100", "74005-010"))[1]["id"]
+    entregar_completo(m1, na_base)
+    regra = sql(f"SELECT base_cobranca, regra_cobranca FROM trajeto WHERE entrega_id = '{na_base}'")
+    checar("entrega em Goiania (cidade da base) fica com valor fixo", regra == "GYN|FIXO_CIDADE_BASE", regra)
+
+    fora = assumir(m1, bdo_em("Anápolis", "Av. Brasil, 1000", "75110-000"))[1]["id"]
+    entregar_completo(m1, fora)
+    regra = sql(f"SELECT base_cobranca || '|' || regra_cobranca FROM trajeto WHERE entrega_id = '{fora}'")
+    km_ida, km_volta = sql(f"SELECT km_ida_final || '|' || km_volta_final FROM trajeto WHERE entrega_id = '{fora}'").split("|")
+    checar("entrega em Anapolis (fora da cidade da base) paga por km", regra == "GYN|POR_KM", regra)
+    checar("ida e volta calculadas a partir do aeroporto (dezenas de km ate Anapolis)",
+           float(km_ida) > 40 and float(km_volta) > 40, (km_ida, km_volta))
+
+    print("\n--- Encaminhamento do BDO pela base ---")
+    s, c = req("POST", "/api/v1/motoristas", adm, corpo={"nome": "Sem Base", "login": "sem.base." + uuid.uuid4().hex[:6], "senha": "senha-teste-123"})
+    checar("cadastrar motorista sem base e recusado (400)", s == 400 and "base" in msg(c).lower(), (s, c))
+    mover("MILEBAG_TESTE_MOTORISTA2", base_bsb)
+    try:
+        j_gyn, _ = novo_bdo(adm, "J")
+        checar("motorista de outra base nao ve o BDO de GYN", j_gyn not in disponiveis(m2))
+        checar("motorista da base ve o BDO de GYN", j_gyn in disponiveis(m1))
+        s, c = assumir(m2, j_gyn)
+        checar("motorista de outra base nao assume o BDO (409)", s == 409 and "outra base" in msg(c), (s, c))
+        s, c = req("POST", f"/api/v1/gestao/bdos/{j_gyn}/base", adm, corpo={"baseId": base_bsb["id"], "motivo": " "})
+        checar("trocar a base sem motivo e recusado (400)", s == 400, (s, c))
+        s, c = req("POST", f"/api/v1/gestao/bdos/{j_gyn}/base", adm, corpo={"baseId": base_bsb["id"], "motivo": "aeroporto errado no texto"})
+        checar("empresa troca a base do BDO com motivo", s == 204, (s, c))
+        checar("depois da troca o BDO aparece para a base nova", j_gyn in disponiveis(m2) and j_gyn not in disponiveis(m1))
+        linha = [e for e in req("GET", "/api/v1/gestao/entregas", adm)[1] if e["bdoId"] == j_gyn]
+        checar("lista da empresa mostra a base do BDO", linha and linha[0]["baseCodigo"] == "BSB", linha)
+        ej = assumir(m2, j_gyn)[1]["id"]
+        s, c = req("POST", f"/api/v1/gestao/bdos/{j_gyn}/base", adm, corpo={"baseId": base_gyn["id"], "motivo": "teste"})
+        checar("BDO ja assumido nao troca de base (409)", s == 409, (s, c))
+        hist = [e for e in req("GET", f"/api/v1/gestao/entregas/{ej}/historico", adm)[1]["eventos"] if e["tipo"] == "BASE_ALTERADA"]
+        checar("historico mostra a troca de base com o motivo", hist and hist[0]["descricao"] == "GYN -> BSB"
+               and hist[0]["detalhe"] == "aeroporto errado no texto", hist)
+        s, c = req("DELETE", f"/api/v1/configuracoes/bases-aeroportuarias/{base_bsb['id']}", adm)
+        checar("base com motoristas ou BDOs nao pode ser removida (409)", s == 409, (s, c))
+    finally:
+        mover("MILEBAG_TESTE_MOTORISTA2", base_gyn)
 
     falhas = [r for r in resultados if not r[1]]
     print(f"\n{len(resultados) - len(falhas)} de {len(resultados)} verificações passaram.")

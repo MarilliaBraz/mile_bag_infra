@@ -8,3 +8,4 @@ mail/config/
 # Ambientes de homologação/produção: segredos e código exportado pelo implantar.sh
 ambientes/*.env
 build/
+__pycache__/
