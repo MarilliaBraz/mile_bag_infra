@@ -487,7 +487,7 @@ def main():
     s, c = req("POST", "/api/v1/configuracoes/bases-aeroportuarias", adm, corpo={"codigoIata": "XXX", "nome": "Inexistente"})
     checar("base com aeroporto fora do cadastro e recusada (400)", s == 400, (s, c))
 
-    def entregar_completo(token, entrega_id):
+    def entregar_completo(token, entrega_id, durante_a_viagem=None):
         s, c = retirar(token, entrega_id)
         assert s == 201, ("retirada", s, c)
         s, c = req("POST", f"/api/v1/entregas/{entrega_id}/rotas/calcular", token,
@@ -499,6 +499,8 @@ def main():
         assert s == 200, ("selecionar", s, c)
         s, c = req("POST", f"/api/v1/entregas/{entrega_id}/viagem/iniciar", token, corpo={"lat": -16.632, "lng": -49.2207})
         assert s in (200, 201), ("iniciar", s, c)
+        if durante_a_viagem:
+            durante_a_viagem()
         agora = __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat().replace("+00:00", "Z")
         s, c = req("POST", f"/api/v1/entregas/{entrega_id}/comprovante", token, formulario=[
             ("foto", png()), ("dataHora", agora), ("latitude", "-16.686"), ("longitude", "-49.264"), ("idLocal", str(uuid.uuid4())),
@@ -526,6 +528,45 @@ def main():
     checar("entrega em Anapolis (fora da cidade da base) paga por km", regra == "GYN|POR_KM", regra)
     checar("ida e volta calculadas a partir do aeroporto (dezenas de km ate Anapolis)",
            float(km_ida) > 40 and float(km_volta) > 40, (km_ida, km_volta))
+
+    print("\n--- Item 9: quilometragem efetivamente percorrida ---")
+    dt = __import__("datetime")
+
+    def caminho(entrega_id, km, inicio_min_atras=60):
+        # 300 m a cada 15 s (72 km/h), rumo ao sul, a partir do aeroporto; termina antes de agora.
+        inicio = dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=inicio_min_atras)
+        passos = int(km * 1000 / 300)
+        lote_id = uuid.uuid4().hex[:12]
+        return [{"idLocal": f"km9-{lote_id}-{i}", "entregaId": entrega_id, "latitude": -16.632 - i * 300 / 111_195.0,
+                 "longitude": -49.2207, "precisaoMetros": 8.0,
+                 "dataHora": (inicio + dt.timedelta(seconds=15 * i)).isoformat().replace("+00:00", "Z")} for i in range(passos + 1)]
+
+    longa = assumir(m1, bdo_em("Anápolis", "Av. Brasil, 1000", "75110-000"))[1]["id"]
+    pontos = caminho(longa, 70)
+    enviados = {}
+
+    def enviar_caminho():
+        enviados["resposta"] = req("POST", "/api/v1/motorista/viagem/posicoes", m1, corpo={"posicoes": pontos})
+
+    entregar_completo(m1, longa, durante_a_viagem=enviar_caminho)
+    s, c = enviados["resposta"]
+    checar("app envia o caminho da viagem em lote", s == 200 and c["aceitas"] == len(pontos) and c["pendentes"] == [], (s, c))
+    s, c = req("POST", "/api/v1/motorista/viagem/posicoes", m1, corpo={"posicoes": pontos[:10]})
+    checar("ponto reenviado nao entra duas vezes", s == 200 and c["aceitas"] == 0, (s, c))
+    km = req("GET", f"/api/v1/gestao/entregas/{longa}/historico", adm)[1].get("quilometragem", [])
+    checar("historico mostra o km calculado e o percorrido", km and km[0]["kmPercorrido"] and float(km[0]["kmPercorrido"]) > 65
+           and float(km[0]["kmIdaCalculado"]) > 40, km)
+    checar("percorrido acima de 5% entra no pagamento na ida e na volta",
+           km and km[0]["usouPercorrido"] is True and km[0]["kmIdaPago"] == km[0]["kmPercorrido"]
+           and km[0]["kmVoltaPago"] == km[0]["kmPercorrido"], km)
+
+    sem_viagem = assumir(m1, bdo_em("Anápolis", "Av. Brasil, 1001", "75110-000"))[1]["id"]
+    s, c = req("POST", "/api/v1/motorista/viagem/posicoes", m1, corpo={"posicoes": caminho(sem_viagem, 0.3, 1)})
+    checar("ponto de viagem que ainda nao chegou ao servidor fica pendente", s == 200 and c["aceitas"] == 0 and len(c["pendentes"]) == 2, (s, c))
+    s, c = req("POST", "/api/v1/motorista/viagem/posicoes", m2, corpo={"posicoes": caminho(longa, 0.3, 30)[:1]})
+    checar("outro motorista nao grava ponto na viagem de um colega", s == 200 and c["aceitas"] == 0, (s, c))
+    s, c = req("POST", "/api/v1/motorista/viagem/posicoes", m1, corpo={"posicoes": caminho(longa, 200)})
+    checar("lote acima de 500 pontos e recusado (400)", s == 400, (s, c))
 
     print("\n--- Encaminhamento do BDO pela base ---")
     s, c = req("POST", "/api/v1/motoristas", adm, corpo={"nome": "Sem Base", "login": "sem.base." + uuid.uuid4().hex[:6], "senha": "senha-teste-123"})
